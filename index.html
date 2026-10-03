@@ -314,7 +314,7 @@ dialog .lnk{font-size:12px;color:var(--mute);word-break:break-all;margin:.8rem 0
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
 import { getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, deleteField, collection, onSnapshot, serverTimestamp, writeBatch } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
-import { getDatabase, ref as dbRef, set as dbSet, onValue } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
+import { getDatabase, ref as dbRef, set as dbSet, onValue, remove as dbRemove } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyApPxGlvofDPN2QyKw_ZvcAh9TxFgiZTi4",
@@ -722,7 +722,7 @@ $('#hResume').onclick = async () => {
 /* =====================================================================
    Fixture mode
    ===================================================================== */
-const FX = { active: false, pin: null, fid: null, unsubs: [], hb: null, raf: 0, last: '', wake: null, torch: null, torchOn: false, torchWant: false, torchT: 0, hudT: null };
+const FX = { active: false, pin: null, fid: null, unsubs: [], hb: null, raf: 0, last: '', wake: null, torch: null, torchOn: false, torchWant: false, torchT: 0, hudT: null, pc: null, dc: null, offerSdp: '' };
 
 async function joinRig(pin, name) {
   await ensureAuth();
@@ -763,6 +763,7 @@ function fixtureAttach(pin, fid, name) {
   }, err => fixtureExit(explain(err))));
   FX.unsubs.push(onValue(audioRef(pin), snap => E.setAudio(snap.val()), () => {}));
   FX.unsubs.push(onValue(liveRef(pin), snap => E.setLive(snap.val()), () => {}));
+  rtcStartFixture(pin, fid);
   clockStart(pin);
   const beat = () => setDoc(doc(db, 'sessions', pin, 'presence', fid), { ownerUid: uid, lastSeen: serverTimestamp() }).catch(() => {});
   beat(); FX.hb = setInterval(beat, 15000); FX.beat = beat;
@@ -778,11 +779,46 @@ function fixtureAttach(pin, fid, name) {
 }
 
 function fixtureDetach(keepStorage) {
+  rtcStopFixture();
   FX.active = false; cancelAnimationFrame(FX.raf); clearInterval(FX.hb);
   FX.unsubs.forEach(u => u()); FX.unsubs = [];
   clockStop(); torchStop();
   if (FX.wake) { FX.wake.release().catch(() => {}); FX.wake = null; }
   if (!keepStorage) { store.del('glowrig.role', true); }
+}
+function rtcStopFixture() {
+  if (FX.dc) { try { FX.dc.close(); } catch {} }
+  if (FX.pc) { try { FX.pc.close(); } catch {} }
+  FX.pc = null; FX.dc = null; FX.offerSdp = '';
+}
+function rtcUseMessage(raw) {
+  try {
+    const msg = JSON.parse(raw);
+    if (msg.t !== 'state') return;
+    if (msg.live) E.setLive(msg.live);
+    if (msg.audio) E.setAudio(msg.audio);
+  } catch {}
+}
+function rtcStartFixture(pin, fid) {
+  FX.unsubs.push(onValue(rtcRef(pin, fid), async snap => {
+    const d = snap.val();
+    if (!d || !d.offer || d.offer.sdp === FX.offerSdp) return;
+    rtcStopFixture(); FX.offerSdp = d.offer.sdp;
+    const pc = new RTCPeerConnection(RTC_CFG); FX.pc = pc;
+    pc.ondatachannel = ev => {
+      FX.dc = ev.channel;
+      FX.dc.onmessage = e => rtcUseMessage(e.data);
+    };
+    pc.onconnectionstatechange = () => {
+      if (['failed', 'closed'].includes(pc.connectionState)) rtcStopFixture();
+    };
+    try {
+      await pc.setRemoteDescription(d.offer);
+      await pc.setLocalDescription(await pc.createAnswer());
+      await waitIce(pc);
+      await dbSet(rtcRef(pin, fid), { ...d, answer: pc.localDescription.toJSON(), answeredAt: serverNow() });
+    } catch { rtcStopFixture(); }
+  }, () => {}));
 }
 function fixtureExit(msg) {
   fixtureDetach(); if (FX.pin) store.del('glowrig.fid.' + FX.pin, true);
@@ -792,7 +828,7 @@ $('#fxLeave').onclick = async e => {
   e.stopPropagation(); const { pin, fid } = FX;
   fixtureDetach(); store.del('glowrig.fid.' + pin, true);
   try {
-    await Promise.all([deleteDoc(doc(db, 'sessions', pin, 'fixtures', fid)), deleteDoc(doc(db, 'sessions', pin, 'presence', fid)), deleteDoc(doc(db, 'sessions', pin, 'clocks', uid))].map(p => p.catch(() => {})));
+    await Promise.all([deleteDoc(doc(db, 'sessions', pin, 'fixtures', fid)), deleteDoc(doc(db, 'sessions', pin, 'presence', fid)), deleteDoc(doc(db, 'sessions', pin, 'clocks', uid)), dbRemove(rtcRef(pin, fid))].map(p => p.catch(() => {})));
   } catch {}
   showView('view-home');
 };
@@ -844,12 +880,13 @@ function torchUpdate(c) {
    ===================================================================== */
 const H = { pin: null, unsubs: [], pend: {}, flushT: null, presence: new Map(), rows: new Map(), orbs: new Map(), gcards: new Map(),
             selected: new Set(), raf: 0, lastLive: 0, liveT: null, fPend: {}, fTimers: {}, activeInput: null, built: false, taps: [],
-            audio: { ctx: null, analyser: null, stream: null, data: null, on: false, level: 0, smooth: 0, lastSent: 0 } };
+            rtc: new Map(), rtcLast: 0, audio: { ctx: null, analyser: null, stream: null, data: null, on: false, level: 0, smooth: 0, lastSent: 0 } };
 const DEL = Symbol('del');
 const sref = () => doc(db, 'sessions', H.pin);
 const fref = id => doc(db, 'sessions', H.pin, 'fixtures', id);
 const audioRef = pin => dbRef(realtime, 'glowrigAudio/' + pin);
 const liveRef = pin => dbRef(realtime, 'glowrigLive/' + pin);
+const rtcRef = (pin, fid = '') => dbRef(realtime, 'glowrigRtc/' + pin + (fid ? '/' + fid : ''));
 
 function applyPath(obj, path, val) {
   const parts = path.split('.'); let o = obj;
@@ -861,6 +898,7 @@ function hostPatch(fields, immediate) {
   for (const [k, v] of Object.entries(fields)) { H.pend[k] = v; applyPath(E.session, k, v); }
   E.touch(); syncHostUI();
   livePublish(immediate);
+  rtcBroadcast(true);
   if (immediate) hostFlush(); else if (!H.flushT) H.flushT = setTimeout(hostFlush, 55);
 }
 async function hostFlush() {
@@ -889,6 +927,64 @@ function livePublish(immediate) {
   };
   if (immediate) go();
   else if (!H.liveT) H.liveT = setTimeout(go, 35);
+}
+const RTC_CFG = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+function waitIce(pc, ms = 1800) {
+  if (pc.iceGatheringState === 'complete') return Promise.resolve();
+  return new Promise(resolve => {
+    const done = () => { clearTimeout(t); pc.removeEventListener('icegatheringstatechange', check); resolve(); };
+    const check = () => { if (pc.iceGatheringState === 'complete') done(); };
+    const t = setTimeout(done, ms);
+    pc.addEventListener('icegatheringstatechange', check);
+  });
+}
+function closeHostPeer(id) {
+  const p = H.rtc.get(id); if (!p) return;
+  if (p.un) p.un();
+  if (p.dc) p.dc.close();
+  if (p.pc) p.pc.close();
+  H.rtc.delete(id);
+}
+function rtcSyncHost() {
+  if (!H.pin) return;
+  const ids = new Set(E.fixtures.keys());
+  for (const id of [...H.rtc.keys()]) if (!ids.has(id)) { closeHostPeer(id); dbRemove(rtcRef(H.pin, id)).catch(() => {}); }
+  for (const id of ids) if (!H.rtc.has(id)) createHostPeer(id);
+}
+async function createHostPeer(id) {
+  if (!H.pin || H.rtc.has(id)) return;
+  const pc = new RTCPeerConnection(RTC_CFG);
+  const dc = pc.createDataChannel('glowrig-live', { ordered: false, maxRetransmits: 0 });
+  const peer = { pc, dc, un: null, answered: false };
+  H.rtc.set(id, peer);
+  dc.onopen = () => rtcBroadcast(true);
+  dc.onclose = () => {};
+  pc.onconnectionstatechange = () => {
+    if (['failed', 'closed'].includes(pc.connectionState)) closeHostPeer(id);
+  };
+  peer.un = onValue(rtcRef(H.pin, id), async snap => {
+    const d = snap.val();
+    if (!d || !d.answer || peer.answered) return;
+    peer.answered = true;
+    try { await pc.setRemoteDescription(d.answer); rtcBroadcast(true); } catch {}
+  }, () => {});
+  try {
+    await pc.setLocalDescription(await pc.createOffer());
+    await waitIce(pc);
+    await dbSet(rtcRef(H.pin, id), { offer: pc.localDescription.toJSON(), updatedAt: serverNow() });
+  } catch { closeHostPeer(id); }
+}
+function rtcBroadcast(force = false) {
+  if (!H.pin || !E.session || !H.rtc.size) return;
+  const now = performance.now();
+  if (!force && now - H.rtcLast < 33) return;
+  H.rtcLast = now;
+  const msg = JSON.stringify({ t: 'state', live: livePayload(), audio: E.sc.audio || DEFAULT_SCENE.audio });
+  for (const p of H.rtc.values()) {
+    if (p.dc && p.dc.readyState === 'open') {
+      try { p.dc.send(msg); } catch {}
+    }
+  }
 }
 function fixturePatch(id, data, immediate) {
   const f = E.fixtures.get(id); if (!f) return;
@@ -921,6 +1017,7 @@ async function hostAttach(pin) {
     const m = new Map(); snap.forEach(d => m.set(d.id, { id: d.id, ...d.data() }));
     for (const [id, p] of Object.entries(H.fPend)) if (m.has(id)) Object.assign(m.get(id), p);
     E.setFixtures(m); for (const id of [...H.selected]) if (!m.has(id)) H.selected.delete(id);
+    rtcSyncHost();
     renderFixtures(); renderGroups();
   }, err => toast(explain(err), true)));
   H.unsubs.push(onSnapshot(collection(sref(), 'presence'), snap => {
@@ -940,6 +1037,7 @@ async function clockWait(pin) { // once the clock is known, restart the beat on 
 }
 function hostDetach(keep) {
   audioStop(false);
+  for (const id of [...H.rtc.keys()]) closeHostPeer(id);
   cancelAnimationFrame(H.raf); clearInterval(H.presenceT); H.unsubs.forEach(u => u()); H.unsubs = []; clockStop();
   clearTimeout(H.flushT); clearTimeout(H.liveT); H.flushT = null; H.liveT = null; H.pend = {};
   if (!keep) { H.pin = null; const p = store.get('glowrig.hostPin'); $('#hResume').hidden = !p; $('#hResumePin').textContent = p || ''; }
@@ -956,6 +1054,7 @@ $('#hEnd').onclick = async () => {
     const uniq = [...new Map(refs.map(r => [r.path, r])).values()];
     for (let i = 0; i < uniq.length; i += 400) { const b = writeBatch(db); uniq.slice(i, i + 400).forEach(r => b.delete(r)); await b.commit(); }
     await deleteDoc(sref());
+    await Promise.all([dbRemove(audioRef(pin)), dbRemove(liveRef(pin)), dbRemove(rtcRef(pin))].map(p => p.catch(() => {})));
     store.del('glowrig.hostPin'); hostDetach(); showView('view-home'); $('#hResume').hidden = true; toast('Rig ended');
   } catch (e) { toast(explain(e), true); }
 };
@@ -1139,6 +1238,7 @@ function audioTick(now) {
     a.level = level; a.lastSent = now;
     const au = { ...DEFAULT_SCENE.audio, ...(E.sc.audio || {}), on: true, level: +a.smooth.toFixed(3), pulse: +pulse.toFixed(3), updatedAt: serverNow() };
     E.setAudio(au);
+    rtcBroadcast(true);
     dbSet(audioRef(H.pin), au).catch(() => {});
   }
 }
@@ -1348,6 +1448,7 @@ function renderGroups() {
 function hostLoop() {
   if (!H.pin) return; const now = serverNow(); let r = 0, g = 0, b = 0, n = 0;
   audioTick(performance.now());
+  rtcBroadcast();
   for (const [id, row] of H.rows) {
     const c = E.colorFor(id, now), s = css(c);
     if (s !== row.last) { row.last = s; row.sw.style.background = s; }
