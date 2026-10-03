@@ -777,7 +777,6 @@ function fixtureAttach(pin, fid, name) {
     if (!snap.metadata.fromCache && !snap.metadata.hasPendingWrites && !m.has(fid)) fixtureExit('The host removed this device.');
     else { const me = m.get(fid); if (me) $('#fxName').textContent = me.name; }
   }, err => fixtureExit(explain(err))));
-  FX.unsubs.push(onValue(audioRef(pin), snap => E.setAudio(snap.val()), () => {}));
   FX.unsubs.push(onValue(liveRef(pin), snap => { E.setLive(snap.val()); checkRemoteReload(); }, () => {}));
   rtcStartFixture(pin, fid);
   clockStart(pin);
@@ -942,7 +941,6 @@ const H = { pin: null, unsubs: [], pend: {}, flushT: null, presence: new Map(), 
 const DEL = Symbol('del');
 const sref = () => doc(db, 'sessions', H.pin);
 const fref = id => doc(db, 'sessions', H.pin, 'fixtures', id);
-const audioRef = pin => dbRef(realtime, 'glowrigAudio/' + pin);
 const liveRef = pin => dbRef(realtime, 'glowrigLive/' + pin);
 const rtcRef = (pin, fid = '') => dbRef(realtime, 'glowrigRtc/' + pin + (fid ? '/' + fid : ''));
 
@@ -1083,7 +1081,6 @@ async function hostAttach(pin) {
     const m = new Map(); snap.forEach(d => { const v = d.data({ serverTimestamps: 'estimate' }); m.set(d.id, v.lastSeen && v.lastSeen.toMillis ? v.lastSeen.toMillis() : 0); });
     H.presence = m; updatePresence();
   }, () => {}));
-  H.unsubs.push(onValue(audioRef(pin), snap => { E.setAudio(snap.val()); syncHostUI(); }, () => {}));
   H.unsubs.push(onValue(liveRef(pin), snap => { E.setLive(snap.val()); syncHostUI(); renderGroups(); renderFixtures(); }, () => {}));
   clockStart(pin);
   H.presenceT = setInterval(updatePresence, 3000);
@@ -1113,7 +1110,7 @@ $('#hEnd').onclick = async () => {
     const uniq = [...new Map(refs.map(r => [r.path, r])).values()];
     for (let i = 0; i < uniq.length; i += 400) { const b = writeBatch(db); uniq.slice(i, i + 400).forEach(r => b.delete(r)); await b.commit(); }
     await deleteDoc(sref());
-    await Promise.all([dbRemove(audioRef(pin)), dbRemove(liveRef(pin)), dbRemove(rtcRef(pin))].map(p => p.catch(() => {})));
+    await Promise.all([dbRemove(liveRef(pin)), dbRemove(rtcRef(pin))].map(p => p.catch(() => {})));
     store.del('glowrig.hostPin'); hostDetach(); showView('view-home'); $('#hResume').hidden = true; toast('Rig ended');
   } catch (e) { toast(explain(e), true); }
 };
@@ -1266,7 +1263,7 @@ async function audioStart() {
     const au = { ...DEFAULT_SCENE.audio, ...(E.sc.audio || {}), on: true, level: 0, pulse: 0, updatedAt: serverNow() };
     E.setAudio(au); syncHostUI();
     hostPatch({ 'scene.audio.on': true }, true);
-    dbSet(audioRef(H.pin), au).catch(() => toast('Audio realtime channel is blocked by database rules.', true));
+    rtcBroadcast(true);
   } catch {
     $('#aStatus').textContent = 'mic blocked';
     toast('Microphone permission is needed for audio reactive mode.', true);
@@ -1283,7 +1280,7 @@ function audioStop(patch = true) {
     const au = { ...DEFAULT_SCENE.audio, ...(E.sc.audio || {}), on: false, level: 0, pulse: 0, updatedAt: serverNow() };
     E.setAudio(au); syncHostUI();
     hostPatch({ 'scene.audio.on': false }, true);
-    dbSet(audioRef(H.pin), au).catch(() => {});
+    rtcBroadcast(true);
   }
 }
 function audioTick(now) {
@@ -1305,7 +1302,6 @@ function audioTick(now) {
     const au = { ...DEFAULT_SCENE.audio, ...(E.sc.audio || {}), on: true, level: +a.smooth.toFixed(3), pulse: +pulse.toFixed(3), updatedAt: serverNow() };
     E.setAudio(au);
     rtcBroadcast(true);
-    dbSet(audioRef(H.pin), au).catch(() => {});
   }
 }
 const loadPresets = () => { try { return JSON.parse(localStorage.getItem('glowrig.presets') || '[]'); } catch { return []; } };
