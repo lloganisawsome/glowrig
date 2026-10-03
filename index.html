@@ -96,6 +96,11 @@ input:focus-visible,button:focus-visible,select:focus-visible{outline:2px solid 
 .row+.row{margin-top:.7rem}
 .lbl{font-size:13px;color:var(--mute);min-width:74px}
 .val{font-variant-numeric:tabular-nums;min-width:34px;text-align:right;color:var(--mute);font-size:13px}
+.livebox{border:1px solid color-mix(in srgb,var(--live) 38%,var(--line));background:color-mix(in srgb,var(--live) 9%,var(--panel2));border-radius:10px;padding:12px;margin:.85rem 0}
+.livebox .row:first-child{margin-top:0}
+.meter{height:12px;flex:1;min-width:120px;border:1px solid var(--line);border-radius:99px;background:#090a0c;overflow:hidden}
+.meter span{display:block;height:100%;width:0%;background:linear-gradient(90deg,var(--ok),var(--warn),var(--live));transition:width .05s linear}
+.status{font-size:12px;color:var(--mute);min-width:96px}
 .dim{opacity:.32;pointer-events:none}
 .bo{width:100%;padding:1rem;font-family:var(--display);font-size:20px;font-weight:700;border-radius:10px;border:2px solid var(--line);background:var(--panel2)}
 .bo.on{background:#000;border-color:var(--bad);color:var(--bad)}
@@ -206,6 +211,19 @@ dialog .lnk{font-size:12px;color:var(--mute);word-break:break-all;margin:.8rem 0
       <h3>Master</h3>
       <button id="mBlackout" class="bo">Blackout</button>
       <div class="row"><span class="lbl">Brightness</span><input id="mBright" type="range" min="0" max="100" style="flex:1"><span class="val" id="mBrightV"></span></div>
+      <div class="livebox">
+        <div class="row">
+          <button id="aToggle" class="btn solid">Start audio reactive</button>
+          <div class="meter" aria-label="Mic level"><span id="aMeter"></span></div>
+          <span id="aStatus" class="status">mic off</span>
+        </div>
+        <div class="row">
+          <span class="lbl">Audio feel</span>
+          <div class="seg" id="aMode"><button data-a="brightness">Brightness</button><button data-a="pulse">Pulse</button><button data-a="color">Colour pop</button></div>
+        </div>
+        <div class="row"><span class="lbl">Sensitivity</span><input id="aSens" type="range" min="20" max="220" value="100" style="flex:1"><span class="val" id="aSensV">100%</span></div>
+        <div class="row"><span class="lbl">Amount</span><input id="aAmt" type="range" min="0" max="100" value="60" style="flex:1"><span class="val" id="aAmtV">60%</span></div>
+      </div>
       <div class="row">
         <button id="mHitW" class="btn">Flash white</button>
         <button id="mHitC" class="btn">Flash colour</button>
@@ -296,6 +314,7 @@ dialog .lnk{font-size:12px;color:var(--mute);word-break:break-all;margin:.8rem 0
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
 import { getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, deleteField, collection, onSnapshot, serverTimestamp, writeBatch } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
+import { getDatabase, ref as dbRef, set as dbSet, onValue } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyApPxGlvofDPN2QyKw_ZvcAh9TxFgiZTi4",
@@ -310,6 +329,7 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
+const realtime = getDatabase(app);
 
 /* =====================================================================
    Utilities
@@ -394,7 +414,8 @@ const PAL = {
 };
 const DEFAULT_SCENE = {
   fx: 'rainbow_wave', bpm: 120, rate: 1, color: '#ff2d95', color2: '#000000', palette: PAL.Neon,
-  brightness: 100, size: 50, dir: 1, scope: 'all', blackout: false, strobeOn: false, strobeHz: 10
+  brightness: 100, size: 50, dir: 1, scope: 'all', blackout: false, strobeOn: false, strobeHz: 10,
+  audio: { on: false, mode: 'brightness', level: 0, pulse: 0, sensitivity: 100, amount: 60, updatedAt: 0 }
 };
 const SCENE_KEYS = ['fx', 'bpm', 'rate', 'color', 'color2', 'palette', 'brightness', 'size', 'dir', 'scope', 'strobeHz'];
 const LOOKS = [
@@ -504,13 +525,20 @@ const EFFECT_MAP = Object.fromEntries(EFFECTS.map(e => [e.id, e]));
    renders the same thing without per-frame network traffic.
    ===================================================================== */
 const E = {
-  session: null, sc: { ...DEFAULT_SCENE }, pal: [], fixtures: new Map(), list: [], layout: new Map(), dirty: true,
-  setSession(d) { this.session = d; this.touch(); },
+  session: null, live: null, sc: { ...DEFAULT_SCENE }, audio: null, pal: [], fixtures: new Map(), list: [], layout: new Map(), dirty: true,
+  setSession(d) { this.session = d; this.applyLive(); this.touch(); },
+  applyLive() {
+    if (!this.session || !this.live) return;
+    this.session = { ...this.session, ...this.live, scene: { ...((this.session && this.session.scene) || {}), ...(this.live.scene || {}) } };
+  },
   touch() {
     const d = this.session; this.sc = { ...DEFAULT_SCENE, ...((d && d.scene) || {}) };
+    this.sc.audio = { ...DEFAULT_SCENE.audio, ...(this.sc.audio || {}), ...(this.audio || {}) };
     const p = (this.sc.palette && this.sc.palette.length) ? this.sc.palette : ['#ffffff'];
     this.pal = p.map(hex); this.dirty = true;
   },
+  setLive(d) { this.live = d ? { ...d } : null; this.applyLive(); this.touch(); },
+  setAudio(d) { this.audio = d ? { ...d } : null; this.touch(); },
   setFixtures(m) { this.fixtures = m; this.dirty = true; },
   relayout() {
     const groups = (this.session && this.session.groups) || {};
@@ -556,6 +584,13 @@ const E = {
           size: clamp((sc.size == null ? 50 : sc.size) / 100), dir: sc.dir === -1 ? -1 : 1
         });
       }
+    }
+    const au = sc.audio || {}, liveAudio = au.on && now - (au.updatedAt || 0) < 1400;
+    if (liveAudio) {
+      const lvl = clamp(au.level || 0), pulse = clamp(au.pulse || 0), amt = clamp((au.amount == null ? 60 : au.amount) / 100);
+      if (au.mode === 'pulse') col = mix(col, WHITE, pulse * amt * 0.85);
+      else if (au.mode === 'color') col = mix(col, palAt(this.pal, now / 1400), pulse * amt * 0.9);
+      else col = scale(col, 0.35 + (0.65 + lvl * amt) * (0.45 + 0.55 * pulse));
     }
     col = scale(col, clamp((sc.brightness == null ? 100 : sc.brightness) / 100));
     if (sc.strobeOn) { const hz = clamp(sc.strobeHz || 10, 1, 30); if (((now / 1000) * hz) % 1 > 0.35) col = BLACK; }
@@ -712,7 +747,7 @@ async function joinRig(pin, name) {
 function fixtureAttach(pin, fid, name) {
   fixtureDetach(true);
   Object.assign(FX, { active: true, pin, fid, last: '' });
-  E.session = null; E.fixtures = new Map(); E.dirty = true;
+  E.session = null; E.live = null; E.audio = null; E.fixtures = new Map(); E.dirty = true;
   $('#fxName').textContent = name; $('#fxPin').textContent = pin; $('#fxStatus').textContent = 'connected';
   showView('view-fixture'); showHud(true); onClock();
   const sref = doc(db, 'sessions', pin);
@@ -726,6 +761,8 @@ function fixtureAttach(pin, fid, name) {
     if (!snap.metadata.fromCache && !snap.metadata.hasPendingWrites && !m.has(fid)) fixtureExit('The host removed this device.');
     else { const me = m.get(fid); if (me) $('#fxName').textContent = me.name; }
   }, err => fixtureExit(explain(err))));
+  FX.unsubs.push(onValue(audioRef(pin), snap => E.setAudio(snap.val()), () => {}));
+  FX.unsubs.push(onValue(liveRef(pin), snap => E.setLive(snap.val()), () => {}));
   clockStart(pin);
   const beat = () => setDoc(doc(db, 'sessions', pin, 'presence', fid), { ownerUid: uid, lastSeen: serverTimestamp() }).catch(() => {});
   beat(); FX.hb = setInterval(beat, 15000); FX.beat = beat;
@@ -806,10 +843,13 @@ function torchUpdate(c) {
    Host mode
    ===================================================================== */
 const H = { pin: null, unsubs: [], pend: {}, flushT: null, presence: new Map(), rows: new Map(), orbs: new Map(), gcards: new Map(),
-            selected: new Set(), raf: 0, lastLive: 0, fPend: {}, fTimers: {}, activeInput: null, built: false, taps: [] };
+            selected: new Set(), raf: 0, lastLive: 0, liveT: null, fPend: {}, fTimers: {}, activeInput: null, built: false, taps: [],
+            audio: { ctx: null, analyser: null, stream: null, data: null, on: false, level: 0, smooth: 0, lastSent: 0 } };
 const DEL = Symbol('del');
 const sref = () => doc(db, 'sessions', H.pin);
 const fref = id => doc(db, 'sessions', H.pin, 'fixtures', id);
+const audioRef = pin => dbRef(realtime, 'glowrigAudio/' + pin);
+const liveRef = pin => dbRef(realtime, 'glowrigLive/' + pin);
 
 function applyPath(obj, path, val) {
   const parts = path.split('.'); let o = obj;
@@ -820,7 +860,8 @@ function hostPatch(fields, immediate) {
   if (!E.session) return;
   for (const [k, v] of Object.entries(fields)) { H.pend[k] = v; applyPath(E.session, k, v); }
   E.touch(); syncHostUI();
-  if (immediate) hostFlush(); else if (!H.flushT) H.flushT = setTimeout(hostFlush, 180);
+  livePublish(immediate);
+  if (immediate) hostFlush(); else if (!H.flushT) H.flushT = setTimeout(hostFlush, 55);
 }
 async function hostFlush() {
   clearTimeout(H.flushT); H.flushT = null;
@@ -828,6 +869,26 @@ async function hostFlush() {
   const out = {}; for (const k of keys) out[k] = H.pend[k] === DEL ? deleteField() : H.pend[k];
   H.pend = {};
   try { await updateDoc(sref(), out); } catch (e) { toast(explain(e), true); }
+}
+function livePayload() {
+  const s = E.session || {};
+  return {
+    scene: E.sc,
+    phaseStart: s.phaseStart || serverNow(),
+    hit: s.hit || null,
+    identify: s.identify || null,
+    locked: !!s.locked,
+    updatedAt: serverNow()
+  };
+}
+function livePublish(immediate) {
+  if (!H.pin || !E.session) return;
+  const go = () => {
+    clearTimeout(H.liveT); H.liveT = null;
+    dbSet(liveRef(H.pin), livePayload()).catch(() => {});
+  };
+  if (immediate) go();
+  else if (!H.liveT) H.liveT = setTimeout(go, 35);
 }
 function fixturePatch(id, data, immediate) {
   const f = E.fixtures.get(id); if (!f) return;
@@ -838,7 +899,7 @@ function fixturePatch(id, data, immediate) {
     const d = H.fPend[id]; delete H.fPend[id]; if (!d) return;
     try { await updateDoc(fref(id), d); } catch (e) { toast(explain(e), true); }
   };
-  if (immediate) go(); else if (!H.fTimers[id]) H.fTimers[id] = setTimeout(go, 180);
+  if (immediate) go(); else if (!H.fTimers[id]) H.fTimers[id] = setTimeout(go, 55);
   renderFixtures();
 }
 
@@ -848,7 +909,7 @@ async function hostAttach(pin) {
   if (!H.built) { buildHost(); H.built = true; }
   showView('view-host'); $('#hPinShow').textContent = pin;
   H.selected.clear(); H.rows.forEach(r => r.el.remove()); H.rows.clear(); H.orbs.forEach(o => o.remove()); H.orbs.clear(); H.gcards.forEach(g => g.el.remove()); H.gcards.clear();
-  E.session = null; E.fixtures = new Map(); E.dirty = true; H.presence = new Map();
+  E.session = null; E.live = null; E.audio = null; E.fixtures = new Map(); E.dirty = true; H.presence = new Map();
   H.unsubs.push(onSnapshot(sref(), snap => {
     if (!snap.exists()) { if (!snap.metadata.fromCache) { toast('This rig no longer exists.', true); hostDetach(); showView('view-home'); } return; }
     E.setSession(snap.data({ serverTimestamps: 'estimate' }));
@@ -866,6 +927,8 @@ async function hostAttach(pin) {
     const m = new Map(); snap.forEach(d => { const v = d.data({ serverTimestamps: 'estimate' }); m.set(d.id, v.lastSeen && v.lastSeen.toMillis ? v.lastSeen.toMillis() : 0); });
     H.presence = m; updatePresence();
   }, () => {}));
+  H.unsubs.push(onValue(audioRef(pin), snap => { E.setAudio(snap.val()); syncHostUI(); }, () => {}));
+  H.unsubs.push(onValue(liveRef(pin), snap => { E.setLive(snap.val()); syncHostUI(); renderGroups(); renderFixtures(); }, () => {}));
   clockStart(pin);
   H.presenceT = setInterval(updatePresence, 3000);
   clockWait(pin);
@@ -876,8 +939,9 @@ async function clockWait(pin) { // once the clock is known, restart the beat on 
   for (let k = 0; k < 40 && H.pin === pin; k++) { if (clock.ready) { hostPatch({ phaseStart: serverNow() }, true); return; } await sleep(250); }
 }
 function hostDetach(keep) {
+  audioStop(false);
   cancelAnimationFrame(H.raf); clearInterval(H.presenceT); H.unsubs.forEach(u => u()); H.unsubs = []; clockStop();
-  clearTimeout(H.flushT); H.flushT = null; H.pend = {};
+  clearTimeout(H.flushT); clearTimeout(H.liveT); H.flushT = null; H.liveT = null; H.pend = {};
   if (!keep) { H.pin = null; const p = store.get('glowrig.hostPin'); $('#hResume').hidden = !p; $('#hResumePin').textContent = p || ''; }
 }
 $('#hLeave').onclick = async () => { await hostFlush(); hostDetach(); showView('view-home'); };
@@ -959,6 +1023,10 @@ function buildHost() {
   $$('#pScope button').forEach(b => b.onclick = () => hostPatch({ 'scene.scope': b.dataset.s }, true));
   $('#pC1').oninput = e => hostPatch({ 'scene.color': e.target.value });
   $('#pC2').oninput = e => hostPatch({ 'scene.color2': e.target.value });
+  $('#aToggle').onclick = () => H.audio.on ? audioStop(true) : audioStart();
+  $('#aSens').oninput = e => hostPatch({ 'scene.audio.sensitivity': +e.target.value });
+  $('#aAmt').oninput = e => hostPatch({ 'scene.audio.amount': +e.target.value });
+  $$('#aMode button').forEach(b => b.onclick = () => hostPatch({ 'scene.audio.mode': b.dataset.a }, true));
 
   // presets
   $('#presetSave').onclick = () => {
@@ -1021,6 +1089,59 @@ function applyScene(sc) {
   const f = {}; SCENE_KEYS.forEach(k => { if (sc[k] !== undefined) f['scene.' + k] = Array.isArray(sc[k]) ? [...sc[k]] : sc[k]; });
   f.phaseStart = serverNow(); hostPatch(f, true);
 }
+async function audioStart() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 1024; analyser.smoothingTimeConstant = 0.62;
+    ctx.createMediaStreamSource(stream).connect(analyser);
+    Object.assign(H.audio, { ctx, analyser, stream, data: new Uint8Array(analyser.fftSize), on: true, level: 0, smooth: 0, lastSent: 0 });
+    $('#aStatus').textContent = 'listening';
+    const au = { ...DEFAULT_SCENE.audio, ...(E.sc.audio || {}), on: true, level: 0, pulse: 0, updatedAt: serverNow() };
+    E.setAudio(au); syncHostUI();
+    hostPatch({ 'scene.audio.on': true }, true);
+    dbSet(audioRef(H.pin), au).catch(() => toast('Audio realtime channel is blocked by database rules.', true));
+  } catch {
+    $('#aStatus').textContent = 'mic blocked';
+    toast('Microphone permission is needed for audio reactive mode.', true);
+  }
+}
+function audioStop(patch = true) {
+  const a = H.audio;
+  if (a.stream) a.stream.getTracks().forEach(t => t.stop());
+  if (a.ctx) a.ctx.close().catch(() => {});
+  Object.assign(a, { ctx: null, analyser: null, stream: null, data: null, on: false, level: 0, smooth: 0 });
+  const meter = $('#aMeter'); if (meter) meter.style.width = '0%';
+  const status = $('#aStatus'); if (status) status.textContent = 'mic off';
+  if (patch && E.session) {
+    const au = { ...DEFAULT_SCENE.audio, ...(E.sc.audio || {}), on: false, level: 0, pulse: 0, updatedAt: serverNow() };
+    E.setAudio(au); syncHostUI();
+    hostPatch({ 'scene.audio.on': false }, true);
+    dbSet(audioRef(H.pin), au).catch(() => {});
+  }
+}
+function audioTick(now) {
+  const a = H.audio, sc = E.sc.audio || DEFAULT_SCENE.audio;
+  if (!a.on || !a.analyser || !a.data) return;
+  a.analyser.getByteTimeDomainData(a.data);
+  let sum = 0;
+  for (let i = 0; i < a.data.length; i++) { const v = (a.data[i] - 128) / 128; sum += v * v; }
+  const rms = Math.sqrt(sum / a.data.length);
+  const sens = (sc.sensitivity == null ? 100 : sc.sensitivity) / 100;
+  const level = clamp((rms - 0.018) * 10 * sens);
+  a.smooth = a.smooth * 0.72 + level * 0.28;
+  const beat = Math.max(0, level - a.smooth * 0.82);
+  const pulse = clamp(a.smooth * 0.55 + beat * 2.4);
+  $('#aMeter').style.width = Math.round(clamp(pulse) * 100) + '%';
+  $('#aStatus').textContent = pulse > 0.55 ? 'beat' : 'listening';
+  if (now - a.lastSent > 70 && (Math.abs(level - a.level) > 0.025 || pulse > 0.34 || now - a.lastSent > 320)) {
+    a.level = level; a.lastSent = now;
+    const au = { ...DEFAULT_SCENE.audio, ...(E.sc.audio || {}), on: true, level: +a.smooth.toFixed(3), pulse: +pulse.toFixed(3), updatedAt: serverNow() };
+    E.setAudio(au);
+    dbSet(audioRef(H.pin), au).catch(() => {});
+  }
+}
 const loadPresets = () => { try { return JSON.parse(localStorage.getItem('glowrig.presets') || '[]'); } catch { return []; } };
 function renderMyPresets() {
   const box = $('#myPresets'); box.innerHTML = ''; const list = loadPresets();
@@ -1052,6 +1173,12 @@ function syncHostUI() {
   $('#pC1Row').classList.toggle('dim', !u.includes('color')); $('#pC2Row').classList.toggle('dim', !u.includes('color2'));
   $('#pPalRow').classList.toggle('dim', !u.includes('palette'));
   $('#hLock').textContent = 'Joining: ' + (s.locked ? 'locked' : 'open'); $('#hLock').classList.toggle('on', !!s.locked);
+  const au = sc.audio || DEFAULT_SCENE.audio;
+  $('#aToggle').textContent = au.on ? 'Stop audio reactive' : 'Start audio reactive';
+  $('#aToggle').classList.toggle('on', !!au.on);
+  setVal($('#aSens'), au.sensitivity == null ? 100 : au.sensitivity); $('#aSensV').textContent = (au.sensitivity == null ? 100 : au.sensitivity) + '%';
+  setVal($('#aAmt'), au.amount == null ? 60 : au.amount); $('#aAmtV').textContent = (au.amount == null ? 60 : au.amount) + '%';
+  segSet('#aMode', 'a', au.mode || 'brightness');
   renderPalette();
 }
 function renderPalette() {
@@ -1220,6 +1347,7 @@ function renderGroups() {
 /* ---------- live preview loop ---------- */
 function hostLoop() {
   if (!H.pin) return; const now = serverNow(); let r = 0, g = 0, b = 0, n = 0;
+  audioTick(performance.now());
   for (const [id, row] of H.rows) {
     const c = E.colorFor(id, now), s = css(c);
     if (s !== row.last) { row.last = s; row.sw.style.background = s; }
