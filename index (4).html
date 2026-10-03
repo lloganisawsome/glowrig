@@ -1,0 +1,1251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#16171b">
+<title>Glowrig — party light controller</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#16171b; --panel:#1f2126; --panel2:#272a31; --line:#343842; --text:#ebe8e1; --mute:#9a98a3;
+  --live:#ff5fa2;               /* follows the colour the rig is currently showing */
+  --ok:#5ee0a0; --bad:#ff6b6b; --warn:#ffc15e;
+  --display:'Bricolage Grotesque',system-ui,sans-serif; --body:'Instrument Sans',system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font-family:var(--body);font-size:15px;-webkit-tap-highlight-color:transparent}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer}
+input[type=range]{accent-color:var(--live);width:100%}
+input[type=color]{width:38px;height:32px;padding:0;border:1px solid var(--line);border-radius:6px;background:var(--panel2);cursor:pointer}
+input[type=text],input:not([type]),input[type=number],input[inputmode],select{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:.55rem .7rem;min-width:0}
+input:focus-visible,button:focus-visible,select:focus-visible{outline:2px solid var(--live);outline-offset:2px}
+.view{display:none}.view.on{display:block}
+[hidden]{display:none!important}
+
+.btn{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:.55rem .9rem;transition:border-color .12s,background .12s}
+.btn:hover{border-color:#5a5f6e}
+.btn.sm{padding:.3rem .6rem;font-size:13px}
+.btn.big{padding:.85rem 1.1rem;font-size:16px;font-weight:600;width:100%}
+.btn.solid{background:var(--text);color:#16171b;border-color:var(--text);font-weight:600}
+.btn.danger{color:var(--bad)}
+.btn.on{background:var(--live);border-color:var(--live);color:#111;font-weight:600}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;flex:none}
+.seg button{background:transparent;border:0;padding:.35rem .65rem;color:var(--mute);font-size:13px}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button.on{background:var(--live);color:#111;font-weight:600}
+.err{color:var(--bad);font-size:14px;margin-top:.6rem}
+.chip{display:inline-flex;align-items:center;gap:.4rem;font-size:13px;color:var(--mute);border:1px solid var(--line);border-radius:99px;padding:.25rem .65rem;white-space:nowrap}
+.dot{width:8px;height:8px;border-radius:50%;background:#555;display:inline-block}
+.dot.ok{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+#toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--text);color:#16171b;padding:.6rem 1rem;border-radius:8px;font-weight:600;z-index:99;opacity:0;pointer-events:none;transition:opacity .2s;max-width:90vw;text-align:center}
+#toast.on{opacity:1}#toast.bad{background:var(--bad);color:#fff}
+
+/* ---------- home ---------- */
+.home{min-height:100vh;display:grid;grid-template-columns:1.1fr 1fr;gap:3rem;max-width:1100px;margin:0 auto;padding:6vh 24px;align-items:center}
+.mark{font-family:var(--display);font-weight:800;font-size:clamp(64px,13vw,150px);line-height:.88;letter-spacing:-.04em;margin:0}
+.mark span{display:inline-block;animation:hue 14s linear infinite;animation-delay:calc(var(--i)*-1.4s)}
+@keyframes hue{0%{color:#ff5fa2}17%{color:#ffb347}34%{color:#e8ff59}50%{color:#4df3b5}67%{color:#4db8ff}83%{color:#a77bff}100%{color:#ff5fa2}}
+.lede{color:var(--mute);font-size:18px;max-width:34ch;margin:1.4rem 0 0;line-height:1.45}
+.panelstack{display:grid;gap:18px}
+.box{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px}
+.box h2{font-family:var(--display);font-size:22px;margin:0 0 .9rem;letter-spacing:-.01em}
+.box label{display:block;font-size:13px;color:var(--mute);margin-bottom:.8rem}
+.box label input{display:block;width:100%;margin-top:.3rem;color:var(--text);font-size:16px}
+.pininput{font-family:var(--display);font-size:30px!important;letter-spacing:.25em;font-weight:700;text-align:center}
+.box.alt{background:transparent;border-style:dashed}
+@media (max-width:820px){.home{grid-template-columns:1fr;gap:1.5rem;padding:5vh 18px}}
+@media (prefers-reduced-motion:reduce){.mark span{animation:none;color:var(--live)}}
+
+/* ---------- fixture ---------- */
+#view-fixture{position:fixed;inset:0;background:#000;overflow:hidden;touch-action:manipulation}
+#fxScreen{position:absolute;inset:0;background:#000}
+.hud{position:absolute;inset:0;display:flex;align-items:flex-end;justify-content:center;padding:18px;padding-bottom:calc(18px + env(safe-area-inset-bottom));transition:opacity .25s}
+.hud.off{opacity:0;pointer-events:none}
+.hudcard{background:rgba(18,19,22,.82);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,.14);border-radius:14px;padding:16px 18px;width:min(440px,100%);text-align:center}
+.hn{font-family:var(--display);font-size:26px;font-weight:700}
+.hs{color:var(--mute);font-size:13px;margin:.3rem 0 .9rem}
+.hb{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+.hint{font-size:12px;color:var(--mute);margin-top:.8rem}
+
+/* ---------- host ---------- */
+.top{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--line);position:sticky;top:0;background:rgba(22,23,27,.94);backdrop-filter:blur(8px);z-index:20}
+.brand{font-family:var(--display);font-weight:800;font-size:22px;letter-spacing:-.03em}
+.brand b{color:var(--live)}
+.rigname{color:var(--mute)}
+.pin{display:flex;align-items:baseline;gap:8px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:.2rem .8rem}
+.pin small{color:var(--mute)}
+.pin b{font-family:var(--display);font-size:26px;letter-spacing:.18em;font-weight:800}
+.grow{flex:1}
+.stage{display:flex;flex-wrap:wrap;gap:18px;justify-content:center;align-items:center;padding:22px 16px;min-height:96px;background:radial-gradient(ellipse at 50% 0%,color-mix(in srgb,var(--live) 18%,transparent),transparent 70%)}
+.orb{width:46px;height:46px;border-radius:50%;background:#000;border:2px solid rgba(255,255,255,.18);position:relative}
+.orb.sel{outline:2px solid var(--text);outline-offset:3px}
+.orb.offline{opacity:.35}
+.stage .empty{color:var(--mute);text-align:center}
+.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px;padding:14px 16px 60px;max-width:1500px;margin:0 auto}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;min-width:0}
+.card h3{font-family:var(--display);font-size:18px;margin:0 0 .8rem;letter-spacing:-.01em;display:flex;align-items:center;gap:.6rem}
+.card h3 small{font-family:var(--body);font-weight:400;color:var(--mute);font-size:13px}
+.c-master{grid-column:span 4}.c-fx{grid-column:span 8}.c-params{grid-column:span 6}.c-looks{grid-column:span 6}
+.c-fix{grid-column:span 8}.c-groups{grid-column:span 4}
+@media (max-width:1100px){.c-master,.c-fx,.c-params,.c-looks,.c-fix,.c-groups{grid-column:span 12}}
+.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.row+.row{margin-top:.7rem}
+.lbl{font-size:13px;color:var(--mute);min-width:74px}
+.val{font-variant-numeric:tabular-nums;min-width:34px;text-align:right;color:var(--mute);font-size:13px}
+.dim{opacity:.32;pointer-events:none}
+.bo{width:100%;padding:1rem;font-family:var(--display);font-size:20px;font-weight:700;border-radius:10px;border:2px solid var(--line);background:var(--panel2)}
+.bo.on{background:#000;border-color:var(--bad);color:var(--bad)}
+.warn{font-size:12px;color:var(--warn);margin-top:.4rem}
+.cat{font-size:13px;color:var(--mute);margin:.9rem 0 .4rem}
+.cat:first-child{margin-top:0}
+.fxrow{display:flex;flex-wrap:wrap;gap:6px}
+.fxbtn{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:.45rem .75rem;font-size:14px;transition:border-color .1s}
+.fxbtn:hover{border-color:#6a6f80}
+.fxbtn.on{border-color:var(--live);box-shadow:inset 0 0 0 1px var(--live),0 0 18px -4px var(--live);background:color-mix(in srgb,var(--live) 14%,var(--panel2))}
+.palrow{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.palrow .x{position:relative}
+.palrow .x button{position:absolute;top:-6px;right:-6px;width:16px;height:16px;border-radius:50%;border:0;background:var(--bad);color:#fff;font-size:11px;line-height:16px;padding:0}
+.palchip{width:64px;height:22px;border-radius:6px;border:1px solid var(--line);padding:0}
+.looks{display:flex;flex-wrap:wrap;gap:6px}
+.preset{display:inline-flex}
+.preset .btn:first-child{border-radius:8px 0 0 8px}.preset .btn+.btn{border-radius:0 8px 8px 0;border-left:0;padding:.3rem .5rem}
+.bulk{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px;background:var(--panel2);border-radius:10px;margin-bottom:10px}
+.bulk .sep{width:1px;height:22px;background:var(--line)}
+.flist{display:grid;gap:6px}
+.frow{display:grid;grid-template-columns:auto 26px minmax(110px,1.3fr) auto minmax(100px,1fr) auto 38px auto;gap:8px;align-items:center;padding:8px;border:1px solid var(--line);border-radius:10px;background:var(--panel2)}
+.frow.sel{border-color:var(--text)}
+.frow .sw{width:26px;height:26px;border-radius:50%;border:1px solid rgba(255,255,255,.25)}
+.frow .stat{font-size:12px;color:var(--mute);display:flex;gap:.35rem;align-items:center;min-width:64px}
+.frow .mv{display:flex;gap:4px}
+.frow input.name{width:100%}
+.frow select{width:100%}
+@media (max-width:760px){.frow{grid-template-columns:auto 26px 1fr auto;}.frow>*:nth-child(n+5){grid-column:span 2}.frow .mv{justify-content:flex-end}}
+.gcard{border:1px solid var(--line);border-radius:10px;padding:10px;background:var(--panel2);margin-bottom:8px}
+.gcard .gh{display:flex;gap:6px;align-items:center;margin-bottom:8px}
+.gcard .gh input{flex:1;min-width:0}
+.gcard .gctl{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
+.muted{color:var(--mute);font-size:13px}
+dialog{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:14px;padding:22px;max-width:360px;text-align:center}
+dialog::backdrop{background:rgba(0,0,0,.65)}
+dialog img{width:100%;image-rendering:pixelated;border-radius:8px;background:#fff;padding:10px}
+dialog .lnk{font-size:12px;color:var(--mute);word-break:break-all;margin:.8rem 0}
+</style>
+</head>
+<body>
+<div id="toast"></div>
+
+<!-- ================= HOME ================= -->
+<section id="view-home" class="view on">
+  <div class="home">
+    <div>
+      <h1 class="mark" aria-label="glowrig"><span style="--i:0">g</span><span style="--i:1">l</span><span style="--i:2">o</span><span style="--i:3">w</span><span style="--i:4">r</span><span style="--i:5">i</span><span style="--i:6">g</span></h1>
+      <p class="lede">Every phone, tablet and laptop in the room becomes a light. One host runs the show.</p>
+    </div>
+    <div class="panelstack">
+      <div class="box">
+        <h2>Join as a light</h2>
+        <label>Rig PIN<input id="jPin" class="pininput" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="off" placeholder="000000"></label>
+        <label>Name this device<input id="jName" maxlength="24" autocomplete="off" placeholder="Left speaker"></label>
+        <button id="jStart" class="btn big solid">Join rig</button>
+        <div id="jErr" class="err" hidden></div>
+      </div>
+      <div class="box alt">
+        <h2>Host a rig</h2>
+        <label>Rig name<input id="hRigName" maxlength="30" autocomplete="off" placeholder="Saturday party"></label>
+        <label>PIN (4 to 8 digits, blank for a random one)<input id="hPin" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="off" placeholder="auto"></label>
+        <button id="hStart" class="btn big">Start rig</button>
+        <button id="hResume" class="btn big" style="margin-top:8px" hidden>Resume rig <b id="hResumePin"></b></button>
+        <div id="hErr" class="err" hidden></div>
+      </div>
+      <div id="authErr" class="err" hidden></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= FIXTURE ================= -->
+<section id="view-fixture" class="view">
+  <div id="fxScreen"></div>
+  <div id="fxHud" class="hud">
+    <div class="hudcard">
+      <div class="hn" id="fxName"></div>
+      <div class="hs"><span id="fxStatus">connecting…</span> · PIN <b id="fxPin"></b> · <span id="fxSync">syncing clock…</span></div>
+      <div class="hb">
+        <button id="fxFull" class="btn">Fullscreen</button>
+        <button id="fxTorch" class="btn">Flashlight: off</button>
+        <button id="fxLeave" class="btn danger">Leave rig</button>
+      </div>
+      <div class="hint">Tap the screen to show or hide this panel. Turn off screen auto-lock for the best result.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= HOST ================= -->
+<section id="view-host" class="view">
+  <header class="top">
+    <div class="brand">glow<b>rig</b></div>
+    <div class="rigname" id="hName"></div>
+    <button id="hPinBtn" class="pin" title="Copy PIN"><small>PIN</small><b id="hPinShow">000000</b></button>
+    <div class="grow"></div>
+    <span class="chip"><i class="dot" id="hDot"></i><span id="hCount">0 online</span></span>
+    <span class="chip" id="hSync">clock syncing…</span>
+    <button id="hQR" class="btn sm">Invite / QR</button>
+    <button id="hTest" class="btn sm">Add this device</button>
+    <button id="hLock" class="btn sm">Joining: open</button>
+    <button id="hLeave" class="btn sm">Leave</button>
+    <button id="hEnd" class="btn sm danger">End rig</button>
+  </header>
+
+  <div id="stage" class="stage"></div>
+
+  <main class="grid">
+    <section class="card c-master">
+      <h3>Master</h3>
+      <button id="mBlackout" class="bo">Blackout</button>
+      <div class="row"><span class="lbl">Brightness</span><input id="mBright" type="range" min="0" max="100" style="flex:1"><span class="val" id="mBrightV"></span></div>
+      <div class="row">
+        <button id="mHitW" class="btn">Flash white</button>
+        <button id="mHitC" class="btn">Flash colour</button>
+        <button id="mRestart" class="btn" title="Restart the beat from 1">Restart beat</button>
+      </div>
+      <div class="row">
+        <button id="mStrobe" class="btn">Strobe</button>
+        <button id="mHold" class="btn" title="Hold to strobe, release to stop">Hold to strobe</button>
+        <input id="mStrobeHz" type="range" min="1" max="25" style="flex:1;min-width:80px"><span class="val" id="mStrobeV"></span>
+      </div>
+      <div class="warn">Flashing lights can trigger seizures in people with photosensitive epilepsy. Warn your guests.</div>
+      <div class="muted" style="margin-top:.8rem">Keys: B blackout · T tap tempo · F flash · S strobe · ← → change effect</div>
+    </section>
+
+    <section class="card c-fx">
+      <h3>Effects <small id="fxCurrent"></small></h3>
+      <div id="fxGrid"></div>
+    </section>
+
+    <section class="card c-params">
+      <h3>Tempo and look</h3>
+      <div class="row">
+        <span class="lbl">Tempo</span>
+        <input id="pBpm" type="range" min="0" max="240" style="flex:1;min-width:120px">
+        <input id="pBpmN" type="number" min="0" max="300" style="width:76px">
+        <button id="pTap" class="btn">Tap</button>
+      </div>
+      <div class="row"><span class="lbl">Speed</span>
+        <div class="seg" id="pRate"><button data-r="0.25">¼×</button><button data-r="0.5">½×</button><button data-r="1">1×</button><button data-r="2">2×</button><button data-r="4">4×</button></div>
+        <span class="muted">0 BPM freezes the pattern</span>
+      </div>
+      <div id="pSizeRow" class="row"><span class="lbl">Size / spread</span><input id="pSize" type="range" min="0" max="100" style="flex:1"><span class="val" id="pSizeV"></span></div>
+      <div class="row">
+        <div id="pDirRow" class="row" style="gap:10px"><span class="lbl">Direction</span><div class="seg" id="pDir"><button data-d="1">Forward</button><button data-d="-1">Reverse</button></div></div>
+        <div class="row" style="gap:10px"><span class="lbl">Spread over</span><div class="seg" id="pScope"><button data-s="all">All lights</button><button data-s="group">Each group</button></div></div>
+      </div>
+      <div class="row">
+        <div id="pC1Row" class="row" style="gap:10px"><span class="lbl">Colour 1</span><input type="color" id="pC1"></div>
+        <div id="pC2Row" class="row" style="gap:10px"><span class="lbl">Colour 2</span><input type="color" id="pC2"></div>
+      </div>
+      <div id="pPalRow">
+        <div class="row"><span class="lbl">Palette</span><div class="palrow" id="palEdit"></div></div>
+        <div class="row"><span class="lbl"></span><div class="palrow" id="palPresets"></div></div>
+      </div>
+    </section>
+
+    <section class="card c-looks">
+      <h3>Looks and saved scenes</h3>
+      <div class="looks" id="looks"></div>
+      <div class="cat">Your scenes</div>
+      <div class="looks" id="myPresets"></div>
+      <div class="row"><input id="presetName" placeholder="Scene name" maxlength="20"><button id="presetSave" class="btn">Save current look</button></div>
+      <div class="muted" style="margin-top:.5rem">Scenes are saved in this browser.</div>
+    </section>
+
+    <section class="card c-fix">
+      <h3>Lights <small id="fixInfo"></small></h3>
+      <div class="bulk">
+        <button id="selAll" class="btn sm">Select all</button><button id="selNone" class="btn sm">None</button>
+        <span class="muted" id="selCount">0 selected</span><i class="sep"></i>
+        <select id="bulkGroup"></select><button id="bulkGroupGo" class="btn sm">Move to group</button><i class="sep"></i>
+        <input type="color" id="bulkColor" value="#ff2d55"><button id="bulkSolid" class="btn sm">Set colour</button>
+        <button id="bulkAuto" class="btn sm">Auto</button><button id="bulkOff" class="btn sm">Off</button><i class="sep"></i>
+        <button id="ordRev" class="btn sm">Reverse order</button><button id="ordShuf" class="btn sm">Shuffle order</button>
+      </div>
+      <div class="flist" id="flist"></div>
+      <div class="muted" id="fEmpty" style="padding:1.2rem 0">No lights yet. Share the PIN or QR code and have devices join.</div>
+    </section>
+
+    <section class="card c-groups">
+      <h3>Groups</h3>
+      <div id="glist"></div>
+      <div class="row"><input id="gNew" placeholder="New group name" maxlength="20" style="flex:1"><button id="gAdd" class="btn">Add</button></div>
+      <div class="row"><span class="muted">Split all lights into</span><input id="gSplitN" type="number" min="2" max="12" value="2" style="width:64px"><span class="muted">groups</span><button id="gSplit" class="btn sm">Split</button></div>
+      <div class="muted" style="margin-top:.7rem">Group modes: Follow uses the main effect, Solid shows one colour, Effect runs its own pattern, Off is dark. A light set to Solid or Off overrides its group.</div>
+    </section>
+  </main>
+</section>
+
+<dialog id="qrDlg">
+  <h2 style="font-family:var(--display);margin:0 0 .8rem">Scan to join</h2>
+  <div id="qrBox"></div>
+  <div class="lnk" id="qrLink"></div>
+  <div class="row" style="justify-content:center"><button id="qrCopy" class="btn">Copy link</button><button id="qrClose" class="btn solid">Done</button></div>
+</dialog>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
+import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
+import { getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, deleteField, collection, onSnapshot, serverTimestamp, writeBatch } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyApPxGlvofDPN2QyKw_ZvcAh9TxFgiZTi4",
+  authDomain: "logansprojects-48f2a.firebaseapp.com",
+  databaseURL: "https://logansprojects-48f2a-default-rtdb.firebaseio.com",
+  projectId: "logansprojects-48f2a",
+  storageBucket: "logansprojects-48f2a.firebasestorage.app",
+  messagingSenderId: "238247393380",
+  appId: "1:238247393380:web:bac5fe87f0ae0618f20771",
+  measurementId: "G-N6FPP5CCRM"
+};
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+/* =====================================================================
+   Utilities
+   ===================================================================== */
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const store = {
+  get(k, s) { try { return (s ? sessionStorage : localStorage).getItem(k); } catch { return null; } },
+  set(k, v, s) { try { (s ? sessionStorage : localStorage).setItem(k, v); } catch {} },
+  del(k, s) { try { (s ? sessionStorage : localStorage).removeItem(k); } catch {} }
+};
+let toastT;
+function toast(msg, bad) {
+  const t = $('#toast'); t.textContent = msg; t.className = 'on' + (bad ? ' bad' : '');
+  clearTimeout(toastT); toastT = setTimeout(() => t.className = '', 2600);
+}
+const newId = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-3);
+const randPin = () => String(Math.floor(100000 + Math.random() * 900000));
+function showView(id) { $$('.view').forEach(v => v.classList.toggle('on', v.id === id)); window.scrollTo(0, 0); }
+function showErr(el, msg) { el.textContent = msg || ''; el.hidden = !msg; }
+function explain(e) {
+  const c = (e && (e.code || e.message)) || '';
+  if (/operation-not-allowed|admin-restricted/.test(c)) return 'Anonymous sign-in is off. In Firebase Console go to Authentication, Sign-in method, and enable Anonymous.';
+  if (/permission-denied/.test(c)) return 'Permission denied. Publish firestore.rules (firebase deploy --only firestore:rules) and check the PIN.';
+  if (/unavailable|network/.test(c)) return 'Cannot reach Firebase. Check your connection.';
+  return (e && e.message) || String(e);
+}
+
+/* ---------- colour helpers (colours are [r,g,b] floats 0..1) ---------- */
+const TAU = Math.PI * 2;
+const BLACK = [0, 0, 0], WHITE = [1, 1, 1];
+const clamp = (x, a = 0, b = 1) => x < a ? a : x > b ? b : x;
+const fract = x => x - Math.floor(x);
+const mod = (a, n) => ((a % n) + n) % n;
+const lerp = (a, b, t) => a + (b - a) * t;
+const mix = (a, b, t) => [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
+const scale = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
+const smooth = t => t * t * (3 - 2 * t);
+const hexCache = new Map();
+function hex(h) {
+  let v = hexCache.get(h); if (v) return v;
+  const m = /^#?([0-9a-f]{6})$/i.exec(h || ''); const n = m ? parseInt(m[1], 16) : 0;
+  v = [(n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255]; hexCache.set(h, v); return v;
+}
+const toHex = c => '#' + c.map(x => Math.round(clamp(x) * 255).toString(16).padStart(2, '0')).join('');
+const css = c => `rgb(${Math.round(clamp(c[0]) * 255)},${Math.round(clamp(c[1]) * 255)},${Math.round(clamp(c[2]) * 255)})`;
+function hsv(h, s, v) {
+  h = fract(h); const i = Math.floor(h * 6), f = h * 6 - i, p = v * (1 - s), q = v * (1 - f * s), t = v * (1 - (1 - f) * s);
+  switch (i % 6) { case 0: return [v, t, p]; case 1: return [q, v, p]; case 2: return [p, v, t]; case 3: return [p, q, v]; case 4: return [t, p, v]; default: return [v, p, q]; }
+}
+function hash(a, b = 0) {
+  let h = (Math.imul(a | 0, 374761393) + Math.imul(b | 0, 668265263)) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177); h ^= h >>> 16; return (h >>> 0) / 4294967296;
+}
+function hashStr(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h | 0; }
+function palAt(pal, x) { // smooth, wrapping
+  const L = pal.length; if (L === 1) return pal[0];
+  const p = mod(x, 1) * L, i = Math.floor(p), f = smooth(p - i);
+  return mix(pal[i % L], pal[(i + 1) % L], f);
+}
+const palStep = (pal, k) => pal[mod(Math.floor(k), pal.length)];
+function palLin(pal, t) { // smooth, non wrapping
+  const L = pal.length; if (L === 1) return pal[0];
+  const p = clamp(t) * (L - 1), i = Math.min(L - 2, Math.floor(p)); return mix(pal[i], pal[i + 1], p - i);
+}
+
+/* =====================================================================
+   Palettes, defaults, built in looks
+   ===================================================================== */
+const PAL = {
+  Neon:   ['#ff2d95', '#00e5ff', '#a259ff', '#e8ff3d'],
+  Rainbow:['#ff3b3b', '#ff9f1c', '#ffe83d', '#3dff7a', '#2db7ff', '#8a4dff'],
+  Fire:   ['#ff2a00', '#ff7a00', '#ffc400'],
+  Ocean:  ['#00c2ff', '#0066ff', '#00ffd0', '#0a2dff'],
+  Sunset: ['#ff3d6e', '#ff8a3d', '#ffd23d', '#9c3dff'],
+  Candy:  ['#ff7eb6', '#7ee8ff', '#fff27e', '#c07eff'],
+  Ice:    ['#e6fbff', '#7fd8ff', '#4d8dff'],
+  Forest: ['#0f8a3c', '#7dff6a', '#00c9a7', '#e8ff7a'],
+  RedBlue:['#ff1744', '#1744ff'],
+  Mono:   ['#ffffff', '#6b6b6b']
+};
+const DEFAULT_SCENE = {
+  fx: 'rainbow_wave', bpm: 120, rate: 1, color: '#ff2d95', color2: '#000000', palette: PAL.Neon,
+  brightness: 100, size: 50, dir: 1, scope: 'all', blackout: false, strobeOn: false, strobeHz: 10
+};
+const SCENE_KEYS = ['fx', 'bpm', 'rate', 'color', 'color2', 'palette', 'brightness', 'size', 'dir', 'scope', 'strobeHz'];
+const LOOKS = [
+  { name: 'Club',      s: { fx: 'rainbow_wave', bpm: 128, size: 60, dir: 1, scope: 'all' } },
+  { name: 'Rave',      s: { fx: 'disco', bpm: 140, size: 70, palette: PAL.Neon, color2: '#000000' } },
+  { name: 'Chase',     s: { fx: 'chase', bpm: 130, color: '#00e5ff', color2: '#12001f', size: 35 } },
+  { name: 'Sunset',    s: { fx: 'palette_wave', bpm: 50, palette: PAL.Sunset, size: 40 } },
+  { name: 'Aurora',    s: { fx: 'aurora', bpm: 60 } },
+  { name: 'Fire pit',  s: { fx: 'fire', bpm: 90 } },
+  { name: 'Cops',      s: { fx: 'police', bpm: 120 } },
+  { name: 'Storm',     s: { fx: 'lightning', bpm: 100, color: '#ffffff', color2: '#06103a' } },
+  { name: 'Heartbeat', s: { fx: 'heartbeat', bpm: 72, color: '#ff1744', color2: '#10000a' } },
+  { name: 'Twinkle',   s: { fx: 'twinkle', bpm: 90, palette: PAL.Candy, color2: '#05000a', size: 45 } },
+  { name: 'Warm white',s: { fx: 'solid', color: '#ffb347' } },
+  { name: 'Ultraviolet',s:{ fx: 'pulse', bpm: 60, color: '#7a2cff', color2: '#0a0018', size: 20 } }
+];
+
+/* =====================================================================
+   Effects. Every effect gets a context c and returns [r,g,b].
+     c.b     beats elapsed (float, synced across devices)
+     c.i/n   this light's index / count (global or within group, per scope)
+     c.u     i/n  (0..1 position)
+     c.gi/gn group index / group count
+     c.col/col2/pal  primary, secondary colour and palette (rgb arrays)
+     c.size  0..1 slider    c.dir  +1 / -1     c.seed  per light random seed
+   `uses` tells the UI which controls matter for this effect.
+   ===================================================================== */
+const EFFECTS = [
+  // ---- Static
+  { id: 'solid', name: 'Solid', cat: 'Static', uses: ['color'], fn: c => c.col },
+  { id: 'gradient', name: 'Gradient', cat: 'Static', uses: ['palette'], fn: c => palLin(c.pal, c.n > 1 ? c.i / (c.n - 1) : 0) },
+  { id: 'split', name: 'Split halves', cat: 'Static', uses: ['color', 'color2'], fn: c => c.i < c.n / 2 ? c.col : c.col2 },
+  { id: 'alternate', name: 'Alternate', cat: 'Static', uses: ['color', 'color2'], fn: c => mod(c.i + Math.floor(c.b), 2) === 0 ? c.col : c.col2 },
+  // ---- Colour
+  { id: 'rainbow_wave', name: 'Rainbow wave', cat: 'Colour', uses: ['size', 'dir'], fn: c => hsv(c.dir * c.b / 4 - c.u * (0.15 + c.size * 1.85), 1, 1) },
+  { id: 'rainbow_fade', name: 'Rainbow fade', cat: 'Colour', uses: ['dir'], fn: c => hsv(c.dir * c.b / 8, 1, 1) },
+  { id: 'palette_fade', name: 'Palette fade', cat: 'Colour', uses: ['palette', 'dir'], fn: c => palAt(c.pal, c.dir * c.b / c.pal.length) },
+  { id: 'palette_step', name: 'Palette step', cat: 'Colour', uses: ['palette', 'dir'], fn: c => palStep(c.pal, c.dir * c.b) },
+  { id: 'palette_wave', name: 'Palette wave', cat: 'Colour', uses: ['palette', 'size', 'dir'], fn: c => palAt(c.pal, c.dir * c.b / (c.pal.length * 2) - c.u * (0.2 + c.size * 1.8)) },
+  { id: 'palette_march', name: 'Palette march', cat: 'Colour', uses: ['palette', 'size', 'dir'], fn: c => {
+      const block = 1 + Math.floor(c.size * 3);
+      return palStep(c.pal, Math.floor(c.i / block) - c.dir * Math.floor(c.b)); } },
+  { id: 'aurora', name: 'Aurora', cat: 'Colour', uses: [], fn: c => hsv(0.38 + 0.2 * Math.sin(TAU * (c.b / 32 - c.u * 0.35)), 0.85, 0.55 + 0.45 * Math.sin(TAU * (c.b / 12 + c.u * 0.6 + hash(c.seed) * 0.2))) },
+  // ---- Motion
+  { id: 'chase', name: 'Chase', cat: 'Motion', uses: ['color', 'color2', 'size', 'dir'], fn: c => {
+      const n = c.n, tail = 1 + c.size * Math.max(0, n - 1) * 0.7, step = Math.floor(c.b);
+      const head = c.dir >= 0 ? mod(step, n) : n - 1 - mod(step, n);
+      const d = c.dir >= 0 ? mod(head - c.i, n) : mod(c.i - head, n);
+      return mix(c.col2, c.col, d < tail ? Math.pow(1 - d / tail, 1.2) : 0); } },
+  { id: 'bounce', name: 'Bounce', cat: 'Motion', uses: ['color', 'color2', 'size'], fn: c => {
+      const n = c.n, L = Math.max(1, 2 * (n - 1)), k = mod(Math.floor(c.b), L), idx = k <= n - 1 ? k : L - k;
+      const tail = 0.8 + c.size * Math.max(0, n - 1) * 0.6, d = Math.abs(c.i - idx);
+      return mix(c.col2, c.col, d < tail ? 1 - d / tail : 0); } },
+  { id: 'wipe', name: 'Wipe', cat: 'Motion', uses: ['color', 'color2', 'dir'], fn: c => {
+      const n = c.n, ph = mod(c.b, 2 * n), idx = c.dir >= 0 ? c.i : n - 1 - c.i;
+      return (ph < n ? idx < ph : idx >= ph - n) ? c.col : c.col2; } },
+  { id: 'wave', name: 'Brightness wave', cat: 'Motion', uses: ['color', 'color2', 'size', 'dir'], fn: c => {
+      const v = 0.5 + 0.5 * Math.sin(TAU * (c.dir * c.b / 4 - c.u * (0.4 + c.size * 2.6)));
+      return mix(c.col2, c.col, smooth(v)); } },
+  { id: 'group_rotate', name: 'Group rotate', cat: 'Motion', uses: ['color', 'color2', 'dir'], fn: c => {
+      const lit = mod(Math.floor(c.b * c.dir), Math.max(1, c.gn)) === c.gi;
+      return mix(c.col2, c.col, lit ? 1 - 0.35 * fract(c.b) : 0); } },
+  { id: 'group_palette', name: 'Group palette', cat: 'Motion', uses: ['palette', 'dir'], fn: c => palStep(c.pal, c.gi + Math.floor(c.b * c.dir)) },
+  { id: 'police', name: 'Police', cat: 'Motion', uses: [], fn: c => {
+      const step = mod(Math.floor(c.b * 4), 8), on = fract(c.b * 4) < 0.7;
+      const red = step === 0 || step === 2, blue = step === 4 || step === 6;
+      if (!on) return BLACK;
+      if (c.n > 1) { const side = c.i < c.n / 2 ? 0 : 1; return side === 0 ? (red ? [1, 0, 0] : BLACK) : (blue ? [0, 0.2, 1] : BLACK); }
+      return red ? [1, 0, 0] : blue ? [0, 0.2, 1] : BLACK; } },
+  // ---- Beat
+  { id: 'pulse', name: 'Pulse', cat: 'Beat', uses: ['color', 'color2', 'size'], fn: c => mix(c.col2, c.col, Math.pow(0.5 + 0.5 * Math.cos(TAU * (c.b - c.u * c.size * 2)), 1.6)) },
+  { id: 'beat_flash', name: 'Beat flash', cat: 'Beat', uses: ['palette', 'color2'], fn: c => mix(c.col2, palStep(c.pal, c.b), Math.pow(1 - fract(c.b), 3)) },
+  { id: 'heartbeat', name: 'Heartbeat', cat: 'Beat', uses: ['color', 'color2'], fn: c => {
+      const p = fract(c.b), g = (x, m, w) => Math.exp(-Math.pow((x - m) / w, 2));
+      return mix(c.col2, c.col, Math.max(g(p, 0.05, 0.06), 0.7 * g(p, 0.3, 0.07))); } },
+  { id: 'strobe', name: 'Strobe', cat: 'Beat', uses: ['color', 'color2', 'size'], fn: c => fract(c.b * 4) < 0.1 + c.size * 0.6 ? c.col : c.col2 },
+  // ---- Chaos
+  { id: 'disco', name: 'Disco', cat: 'Chaos', uses: ['palette', 'color2', 'size'], fn: c => {
+      const step = Math.floor(c.b), lit = hash(c.seed, step) < 0.25 + c.size * 0.75;
+      const colr = c.pal[Math.floor(hash(c.seed, step + 977) * c.pal.length) % c.pal.length];
+      return lit ? scale(colr, 1 - 0.4 * fract(c.b)) : c.col2; } },
+  { id: 'random_one', name: 'Random one', cat: 'Chaos', uses: ['palette', 'color2'], fn: c => {
+      const step = Math.floor(c.b), idx = Math.floor(hash(step * 7 + 1, 99 + c.salt) * c.n);
+      if (c.i !== idx) return c.col2;
+      return mix(c.col2, c.pal[Math.floor(hash(step, 5 + c.salt) * c.pal.length) % c.pal.length], Math.pow(1 - fract(c.b), 1.3)); } },
+  { id: 'twinkle', name: 'Twinkle', cat: 'Chaos', uses: ['palette', 'color2', 'size'], fn: c => {
+      const local = c.b * 0.5 + hash(c.seed, 1) * 10, k = Math.floor(local), f = local - k;
+      const on = hash(c.seed, k) < 0.15 + c.size * 0.6;
+      const colr = c.pal[Math.floor(hash(c.seed, k + 31) * c.pal.length) % c.pal.length];
+      return mix(c.col2, colr, on ? Math.pow(Math.sin(Math.PI * f), 2) : 0); } },
+  { id: 'fire', name: 'Fire', cat: 'Chaos', uses: [], fn: c => {
+      const x = c.b * 2, k = Math.floor(x), v = lerp(hash(c.seed, k), hash(c.seed, k + 1), smooth(x - k));
+      return hsv(0.01 + 0.08 * v, 1, 0.25 + 0.75 * v); } },
+  { id: 'lightning', name: 'Lightning', cat: 'Chaos', uses: ['color', 'color2'], fn: c => {
+      const slot = Math.floor(c.b / 3), f = (c.b / 3 - slot) * 3;
+      let v = 0;
+      if (hash(slot, 77 + c.salt) < 0.65 && hash(c.seed, slot) < 0.75) {
+        v = f < 0.12 ? 1 : f < 0.2 ? 0.15 : f < 0.32 ? 1 : Math.pow(Math.max(0, 1 - (f - 0.32)), 3);
+      }
+      return mix(c.col2, c.col, v); } }
+];
+const EFFECT_MAP = Object.fromEntries(EFFECTS.map(e => [e.id, e]));
+
+/* =====================================================================
+   Engine: shared by host preview and fixtures. Pure function of
+   (session doc, fixture docs, server time) -> colour, so every device
+   renders the same thing without per-frame network traffic.
+   ===================================================================== */
+const E = {
+  session: null, sc: { ...DEFAULT_SCENE }, pal: [], fixtures: new Map(), list: [], layout: new Map(), dirty: true,
+  setSession(d) { this.session = d; this.touch(); },
+  touch() {
+    const d = this.session; this.sc = { ...DEFAULT_SCENE, ...((d && d.scene) || {}) };
+    const p = (this.sc.palette && this.sc.palette.length) ? this.sc.palette : ['#ffffff'];
+    this.pal = p.map(hex); this.dirty = true;
+  },
+  setFixtures(m) { this.fixtures = m; this.dirty = true; },
+  relayout() {
+    const groups = (this.session && this.session.groups) || {};
+    this.list = [...this.fixtures.values()].sort((a, b) => (a.order - b.order) || (a.id < b.id ? -1 : 1));
+    const gArr = Object.entries(groups).map(([id, g]) => ({ id, order: g.order || 0 }))
+      .sort((a, b) => (a.order - b.order) || (a.id < b.id ? -1 : 1));
+    const members = {};
+    for (const f of this.list) { const k = f.group && groups[f.group] ? f.group : '_'; (members[k] = members[k] || []).push(f.id); }
+    const keys = gArr.map(g => g.id).filter(id => members[id] && members[id].length);
+    if (members._ && members._.length) keys.push('_');
+    this.layout = new Map();
+    this.list.forEach((f, i) => {
+      const k = f.group && groups[f.group] ? f.group : '_', m = members[k];
+      this.layout.set(f.id, { i, n: this.list.length, gi: keys.indexOf(k), gn: keys.length, ii: m.indexOf(f.id), nn: m.length, seed: hashStr(f.id), gkey: k });
+    });
+    this.dirty = false;
+  },
+  colorFor(fid, now) {
+    if (this.dirty) this.relayout();
+    const s = this.session; if (!s) return BLACK;
+    const f = this.fixtures.get(fid), L = this.layout.get(fid); if (!f || !L) return BLACK;
+    const sc = this.sc;
+    if (sc.blackout) return BLACK;
+    const idn = s.identify;
+    if (idn && idn.fid === fid && now - idn.at < 3000 && now - idn.at > -1000)
+      return Math.floor(Math.max(0, now - idn.at) / 150) % 2 === 0 ? WHITE : BLACK;
+    if (f.mode === 'off') return BLACK;
+    let col;
+    if (f.mode === 'solid') col = hex(f.color);
+    else {
+      const g = f.group ? (s.groups || {})[f.group] : null, gm = g ? (g.mode || 'follow') : 'follow';
+      if (gm === 'off') col = BLACK;
+      else if (gm === 'solid') col = hex(g.color);
+      else {
+        const own = gm === 'fx', gs = own || sc.scope === 'group';
+        const bpm = (sc.bpm || 0) * (sc.rate || 1);
+        const b = bpm > 0 ? (now - (s.phaseStart || now)) * bpm / 60000 : 0;
+        const n = gs ? L.nn : L.n, i = gs ? L.ii : L.i;
+        const fx = EFFECT_MAP[own ? g.fx : sc.fx] || EFFECT_MAP.solid;
+        col = fx.fn({
+          b, i, n, u: n > 1 ? i / n : 0, gi: L.gi, gn: L.gn, salt: gs ? L.gi + 1 : 0, seed: L.seed, pal: this.pal,
+          col: hex(own ? g.color : sc.color), col2: hex(own ? g.color2 : sc.color2),
+          size: clamp((sc.size == null ? 50 : sc.size) / 100), dir: sc.dir === -1 ? -1 : 1
+        });
+      }
+    }
+    col = scale(col, clamp((sc.brightness == null ? 100 : sc.brightness) / 100));
+    if (sc.strobeOn) { const hz = clamp(sc.strobeHz || 10, 1, 30); if (((now / 1000) * hz) % 1 > 0.35) col = BLACK; }
+    const h = s.hit;
+    if (h && h.at) {
+      const el = now - h.at, dec = h.decay || 650;
+      if (el > -100 && el < dec) col = mix(col, hex(h.color || '#ffffff'), Math.pow(1 - Math.max(0, el) / dec, 1.5));
+    }
+    return col;
+  }
+};
+
+/* =====================================================================
+   Auth + clock sync
+   ===================================================================== */
+let uid = null;
+async function ensureAuth() {
+  if (uid) return uid;
+  if (auth.authStateReady) await auth.authStateReady();
+  else await new Promise(res => { const un = onAuthStateChanged(auth, () => { un(); res(); }); });
+  if (!auth.currentUser) await signInAnonymously(auth);
+  uid = auth.currentUser.uid; return uid;
+}
+
+const clock = { offset: 0, samples: [], ready: false, rtt: null, timer: null, pin: null, stop: false };
+const serverNow = () => Date.now() + clock.offset;
+
+function clockSample(pin) {
+  return new Promise(resolve => {
+    const nonce = newId(), ref = doc(db, 'sessions', pin, 'clocks', uid);
+    const t0 = performance.now(), w0 = Date.now();
+    let un = null, done = false;
+    const finish = v => { if (done) return; done = true; if (un) un(); resolve(v); };
+    un = onSnapshot(ref, { includeMetadataChanges: true }, snap => {
+      if (snap.metadata.hasPendingWrites) return;
+      const d = snap.data(); if (!d || d.nonce !== nonce || !d.t || !d.t.toMillis) return;
+      const rtt = performance.now() - t0;
+      finish({ rtt, offset: d.t.toMillis() - (w0 + rtt / 2) });
+    }, () => finish(null));
+    setDoc(ref, { t: serverTimestamp(), nonce }).catch(() => finish(null));
+    setTimeout(() => finish(null), 8000);
+  });
+}
+async function clockBurst(pin, n) {
+  for (let k = 0; k < n && !clock.stop && clock.pin === pin; k++) {
+    const s = await clockSample(pin);
+    if (s) {
+      clock.samples.push(s); if (clock.samples.length > 12) clock.samples.shift();
+      const best = clock.samples.reduce((a, b) => b.rtt < a.rtt ? b : a);
+      clock.offset = best.offset; clock.rtt = best.rtt; clock.ready = true; onClock();
+    }
+    await sleep(300);
+  }
+}
+function clockStart(pin) {
+  clockStop(); clock.stop = false; clock.pin = pin; clock.samples = []; clock.ready = false;
+  clockBurst(pin, 6);
+  clock.timer = setInterval(() => clockBurst(pin, 2), 30000);
+}
+function clockStop() { clock.stop = true; clearInterval(clock.timer); clock.pin = null; }
+function onClock() {
+  const txt = clock.ready ? `clock ±${Math.max(1, Math.round(clock.rtt / 2))} ms` : 'syncing clock…';
+  const a = $('#hSync'), b = $('#fxSync'); if (a) a.textContent = txt; if (b) b.textContent = txt;
+}
+
+/* =====================================================================
+   Home screen
+   ===================================================================== */
+const qp = new URLSearchParams(location.search);
+$('#jPin').value = (qp.get('pin') || '').replace(/\D/g, '').slice(0, 8);
+$('#jName').value = store.get('glowrig.name') || '';
+if (!$('#jName').value) $('#jName').placeholder = 'Light ' + (1 + Math.floor(Math.random() * 99));
+['#jPin', '#hPin'].forEach(s => $(s).addEventListener('input', e => e.target.value = e.target.value.replace(/\D/g, '')));
+$('#hRigName').value = store.get('glowrig.rigName') || '';
+const savedHostPin = store.get('glowrig.hostPin');
+if (savedHostPin) { $('#hResume').hidden = false; $('#hResumePin').textContent = savedHostPin; }
+
+$('#jStart').onclick = async () => {
+  const pin = $('#jPin').value.trim(), name = ($('#jName').value.trim() || $('#jName').placeholder || 'Light').slice(0, 24);
+  showErr($('#jErr'), '');
+  if (!/^[0-9]{4,8}$/.test(pin)) return showErr($('#jErr'), 'Enter the 4 to 8 digit PIN from the host.');
+  $('#jStart').disabled = true;
+  try { store.set('glowrig.name', $('#jName').value.trim()); await joinRig(pin, name); }
+  catch (e) { showErr($('#jErr'), explain(e)); }
+  $('#jStart').disabled = false;
+};
+$('#jPin').addEventListener('keydown', e => { if (e.key === 'Enter') $('#jName').focus(); });
+$('#jName').addEventListener('keydown', e => { if (e.key === 'Enter') $('#jStart').click(); });
+
+$('#hStart').onclick = async () => {
+  showErr($('#hErr'), ''); $('#hStart').disabled = true;
+  try {
+    await ensureAuth();
+    const custom = $('#hPin').value.trim();
+    if (custom && !/^[0-9]{4,8}$/.test(custom)) throw new Error('PIN must be 4 to 8 digits.');
+    const name = ($('#hRigName').value.trim() || 'My party').slice(0, 30);
+    store.set('glowrig.rigName', $('#hRigName').value.trim());
+    let pin = custom || randPin();
+    for (let tries = 0; ; tries++) {
+      const snap = await getDoc(doc(db, 'sessions', pin));
+      if (!snap.exists()) break;
+      if (snap.data().hostUid === uid) { await hostAttach(pin); return; }
+      if (custom) throw new Error('That PIN is already in use. Pick another.');
+      if (tries > 6) throw new Error('Could not find a free PIN. Try again.');
+      pin = randPin();
+    }
+    await setDoc(doc(db, 'sessions', pin), {
+      hostUid: uid, name, createdAt: serverTimestamp(), locked: false, phaseStart: Date.now(),
+      scene: { ...DEFAULT_SCENE, palette: [...PAL.Neon] }, groups: {},
+      hit: { id: 0, at: 0, color: '#ffffff', decay: 650 }, identify: { fid: '', at: 0 }
+    });
+    await hostAttach(pin);
+  } catch (e) { showErr($('#hErr'), explain(e)); }
+  $('#hStart').disabled = false;
+};
+$('#hResume').onclick = async () => {
+  showErr($('#hErr'), '');
+  try {
+    await ensureAuth(); const pin = store.get('glowrig.hostPin');
+    const snap = await getDoc(doc(db, 'sessions', pin));
+    if (!snap.exists() || snap.data().hostUid !== uid) {
+      store.del('glowrig.hostPin'); $('#hResume').hidden = true;
+      throw new Error('That rig no longer exists, or it was created from a different browser profile.');
+    }
+    await hostAttach(pin);
+  } catch (e) { showErr($('#hErr'), explain(e)); }
+};
+
+/* =====================================================================
+   Fixture mode
+   ===================================================================== */
+const FX = { active: false, pin: null, fid: null, unsubs: [], hb: null, raf: 0, last: '', wake: null, torch: null, torchOn: false, torchWant: false, torchT: 0, hudT: null };
+
+async function joinRig(pin, name) {
+  await ensureAuth();
+  const sref = doc(db, 'sessions', pin), ss = await getDoc(sref);
+  if (!ss.exists()) throw new Error('No rig found with that PIN. Check it with the host.');
+  const sd = ss.data();
+  let fid = store.get('glowrig.fid.' + pin, true) || newId();
+  let fref = doc(db, 'sessions', pin, 'fixtures', fid);
+  const fs = await getDoc(fref);
+  if (fs.exists() && fs.data().ownerUid === uid) {
+    if (fs.data().name !== name) await updateDoc(fref, { name });
+  } else {
+    if (sd.locked && sd.hostUid !== uid) throw new Error('The host has locked joining right now.');
+    if (fs.exists()) { fid = newId(); fref = doc(db, 'sessions', pin, 'fixtures', fid); }
+    await setDoc(fref, { ownerUid: uid, name, joinedAt: serverTimestamp(), group: null, mode: 'auto', color: '#ffffff', order: Date.now() });
+  }
+  store.set('glowrig.fid.' + pin, fid, true);
+  store.set('glowrig.role', JSON.stringify({ role: 'fixture', pin, name }), true);
+  fixtureAttach(pin, fid, name);
+}
+
+function fixtureAttach(pin, fid, name) {
+  fixtureDetach(true);
+  Object.assign(FX, { active: true, pin, fid, last: '' });
+  E.session = null; E.fixtures = new Map(); E.dirty = true;
+  $('#fxName').textContent = name; $('#fxPin').textContent = pin; $('#fxStatus').textContent = 'connected';
+  showView('view-fixture'); showHud(true); onClock();
+  const sref = doc(db, 'sessions', pin);
+  FX.unsubs.push(onSnapshot(sref, snap => {
+    if (!snap.exists()) { if (!snap.metadata.fromCache) fixtureExit('The host ended this rig.'); return; }
+    E.setSession(snap.data({ serverTimestamps: 'estimate' }));
+  }, err => fixtureExit(explain(err))));
+  FX.unsubs.push(onSnapshot(collection(sref, 'fixtures'), snap => {
+    const m = new Map(); snap.forEach(d => m.set(d.id, { id: d.id, ...d.data() }));
+    E.setFixtures(m);
+    if (!snap.metadata.fromCache && !snap.metadata.hasPendingWrites && !m.has(fid)) fixtureExit('The host removed this device.');
+    else { const me = m.get(fid); if (me) $('#fxName').textContent = me.name; }
+  }, err => fixtureExit(explain(err))));
+  clockStart(pin);
+  const beat = () => setDoc(doc(db, 'sessions', pin, 'presence', fid), { ownerUid: uid, lastSeen: serverTimestamp() }).catch(() => {});
+  beat(); FX.hb = setInterval(beat, 15000); FX.beat = beat;
+  wakeLock();
+  const loop = () => {
+    if (!FX.active) return;
+    const c = E.colorFor(FX.fid, serverNow()), str = css(c);
+    if (str !== FX.last) { $('#fxScreen').style.background = str; FX.last = str; }
+    torchUpdate(c);
+    FX.raf = requestAnimationFrame(loop);
+  };
+  FX.raf = requestAnimationFrame(loop);
+}
+
+function fixtureDetach(keepStorage) {
+  FX.active = false; cancelAnimationFrame(FX.raf); clearInterval(FX.hb);
+  FX.unsubs.forEach(u => u()); FX.unsubs = [];
+  clockStop(); torchStop();
+  if (FX.wake) { FX.wake.release().catch(() => {}); FX.wake = null; }
+  if (!keepStorage) { store.del('glowrig.role', true); }
+}
+function fixtureExit(msg) {
+  fixtureDetach(); if (FX.pin) store.del('glowrig.fid.' + FX.pin, true);
+  showView('view-home'); showErr($('#jErr'), msg || '');
+}
+$('#fxLeave').onclick = async e => {
+  e.stopPropagation(); const { pin, fid } = FX;
+  fixtureDetach(); store.del('glowrig.fid.' + pin, true);
+  try {
+    await Promise.all([deleteDoc(doc(db, 'sessions', pin, 'fixtures', fid)), deleteDoc(doc(db, 'sessions', pin, 'presence', fid)), deleteDoc(doc(db, 'sessions', pin, 'clocks', uid))].map(p => p.catch(() => {})));
+  } catch {}
+  showView('view-home');
+};
+function showHud(on) {
+  $('#fxHud').classList.toggle('off', !on); clearTimeout(FX.hudT);
+  if (on) FX.hudT = setTimeout(() => $('#fxHud').classList.add('off'), 6000);
+}
+$('#view-fixture').addEventListener('click', () => showHud($('#fxHud').classList.contains('off')));
+$('.hudcard').addEventListener('click', e => { e.stopPropagation(); showHud(true); });
+$('#fxFull').onclick = () => {
+  const el = document.documentElement;
+  if (document.fullscreenElement) document.exitFullscreen();
+  else if (el.requestFullscreen) el.requestFullscreen().catch(() => toast('Fullscreen blocked by browser', true));
+  else toast('Fullscreen is not available on this device. Try Add to Home Screen.', true);
+};
+async function wakeLock() {
+  try { if ('wakeLock' in navigator) FX.wake = await navigator.wakeLock.request('screen'); } catch {}
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && FX.active) { wakeLock(); if (FX.beat) FX.beat(); }
+});
+window.addEventListener('online', () => { if (FX.active && FX.beat) FX.beat(); });
+
+/* optional: use the phone flashlight as an extra light (Chrome on Android) */
+$('#fxTorch').onclick = async () => {
+  if (FX.torch) { torchStop(); return; }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    const track = stream.getVideoTracks()[0], caps = track.getCapabilities ? track.getCapabilities() : {};
+    if (!caps.torch) { track.stop(); toast('This device has no controllable flashlight.', true); return; }
+    FX.torch = track; FX.torchOn = false; $('#fxTorch').textContent = 'Flashlight: on';
+  } catch { toast('Camera permission is needed for the flashlight.', true); }
+};
+function torchStop() {
+  if (FX.torch) { try { FX.torch.stop(); } catch {} } FX.torch = null; FX.torchOn = false;
+  const b = $('#fxTorch'); if (b) b.textContent = 'Flashlight: off';
+}
+function torchUpdate(c) {
+  if (!FX.torch) return;
+  const want = Math.max(c[0], c[1], c[2]) > 0.45, t = performance.now();
+  if (want !== FX.torchOn && t - FX.torchT > 120) {
+    FX.torchT = t; FX.torchOn = want;
+    FX.torch.applyConstraints({ advanced: [{ torch: want }] }).catch(() => {});
+  }
+}
+
+/* =====================================================================
+   Host mode
+   ===================================================================== */
+const H = { pin: null, unsubs: [], pend: {}, flushT: null, presence: new Map(), rows: new Map(), orbs: new Map(), gcards: new Map(),
+            selected: new Set(), raf: 0, lastLive: 0, fPend: {}, fTimers: {}, activeInput: null, built: false, taps: [] };
+const DEL = Symbol('del');
+const sref = () => doc(db, 'sessions', H.pin);
+const fref = id => doc(db, 'sessions', H.pin, 'fixtures', id);
+
+function applyPath(obj, path, val) {
+  const parts = path.split('.'); let o = obj;
+  for (let i = 0; i < parts.length - 1; i++) { const k = parts[i]; if (typeof o[k] !== 'object' || o[k] === null) o[k] = {}; o = o[k]; }
+  const last = parts[parts.length - 1]; if (val === DEL) delete o[last]; else o[last] = val;
+}
+function hostPatch(fields, immediate) {
+  if (!E.session) return;
+  for (const [k, v] of Object.entries(fields)) { H.pend[k] = v; applyPath(E.session, k, v); }
+  E.touch(); syncHostUI();
+  if (immediate) hostFlush(); else if (!H.flushT) H.flushT = setTimeout(hostFlush, 180);
+}
+async function hostFlush() {
+  clearTimeout(H.flushT); H.flushT = null;
+  const keys = Object.keys(H.pend); if (!keys.length) return;
+  const out = {}; for (const k of keys) out[k] = H.pend[k] === DEL ? deleteField() : H.pend[k];
+  H.pend = {};
+  try { await updateDoc(sref(), out); } catch (e) { toast(explain(e), true); }
+}
+function fixturePatch(id, data, immediate) {
+  const f = E.fixtures.get(id); if (!f) return;
+  Object.assign(f, data); E.dirty = true;
+  H.fPend[id] = { ...(H.fPend[id] || {}), ...data };
+  const go = async () => {
+    clearTimeout(H.fTimers[id]); delete H.fTimers[id];
+    const d = H.fPend[id]; delete H.fPend[id]; if (!d) return;
+    try { await updateDoc(fref(id), d); } catch (e) { toast(explain(e), true); }
+  };
+  if (immediate) go(); else if (!H.fTimers[id]) H.fTimers[id] = setTimeout(go, 180);
+  renderFixtures();
+}
+
+async function hostAttach(pin) {
+  hostDetach(true);
+  H.pin = pin; store.set('glowrig.hostPin', pin);
+  if (!H.built) { buildHost(); H.built = true; }
+  showView('view-host'); $('#hPinShow').textContent = pin;
+  H.selected.clear(); H.rows.forEach(r => r.el.remove()); H.rows.clear(); H.orbs.forEach(o => o.remove()); H.orbs.clear(); H.gcards.forEach(g => g.el.remove()); H.gcards.clear();
+  E.session = null; E.fixtures = new Map(); E.dirty = true; H.presence = new Map();
+  H.unsubs.push(onSnapshot(sref(), snap => {
+    if (!snap.exists()) { if (!snap.metadata.fromCache) { toast('This rig no longer exists.', true); hostDetach(); showView('view-home'); } return; }
+    E.setSession(snap.data({ serverTimestamps: 'estimate' }));
+    for (const [k, v] of Object.entries(H.pend)) applyPath(E.session, k, v);
+    E.touch(); $('#hName').textContent = E.session.name || '';
+    syncHostUI(); renderGroups(); renderFixtures();
+  }, err => toast(explain(err), true)));
+  H.unsubs.push(onSnapshot(collection(sref(), 'fixtures'), snap => {
+    const m = new Map(); snap.forEach(d => m.set(d.id, { id: d.id, ...d.data() }));
+    for (const [id, p] of Object.entries(H.fPend)) if (m.has(id)) Object.assign(m.get(id), p);
+    E.setFixtures(m); for (const id of [...H.selected]) if (!m.has(id)) H.selected.delete(id);
+    renderFixtures(); renderGroups();
+  }, err => toast(explain(err), true)));
+  H.unsubs.push(onSnapshot(collection(sref(), 'presence'), snap => {
+    const m = new Map(); snap.forEach(d => { const v = d.data({ serverTimestamps: 'estimate' }); m.set(d.id, v.lastSeen && v.lastSeen.toMillis ? v.lastSeen.toMillis() : 0); });
+    H.presence = m; updatePresence();
+  }, () => {}));
+  clockStart(pin);
+  H.presenceT = setInterval(updatePresence, 3000);
+  clockWait(pin);
+  H.raf = requestAnimationFrame(hostLoop);
+  history.replaceState(null, '', location.pathname);
+}
+async function clockWait(pin) { // once the clock is known, restart the beat on the server timebase
+  for (let k = 0; k < 40 && H.pin === pin; k++) { if (clock.ready) { hostPatch({ phaseStart: serverNow() }, true); return; } await sleep(250); }
+}
+function hostDetach(keep) {
+  cancelAnimationFrame(H.raf); clearInterval(H.presenceT); H.unsubs.forEach(u => u()); H.unsubs = []; clockStop();
+  clearTimeout(H.flushT); H.flushT = null; H.pend = {};
+  if (!keep) { H.pin = null; const p = store.get('glowrig.hostPin'); $('#hResume').hidden = !p; $('#hResumePin').textContent = p || ''; }
+}
+$('#hLeave').onclick = async () => { await hostFlush(); hostDetach(); showView('view-home'); };
+$('#hEnd').onclick = async () => {
+  if (!confirm('End this rig? All lights will be disconnected.')) return;
+  try {
+    const pin = H.pin; await hostFlush();
+    const refs = [];
+    E.fixtures.forEach((_, id) => refs.push(fref(id), doc(db, 'sessions', pin, 'presence', id)));
+    (await getDocs(collection(sref(), 'presence'))).forEach(d => refs.push(d.ref));
+    (await getDocs(collection(sref(), 'clocks'))).forEach(d => refs.push(d.ref));
+    const uniq = [...new Map(refs.map(r => [r.path, r])).values()];
+    for (let i = 0; i < uniq.length; i += 400) { const b = writeBatch(db); uniq.slice(i, i + 400).forEach(r => b.delete(r)); await b.commit(); }
+    await deleteDoc(sref());
+    store.del('glowrig.hostPin'); hostDetach(); showView('view-home'); $('#hResume').hidden = true; toast('Rig ended');
+  } catch (e) { toast(explain(e), true); }
+};
+$('#hPinBtn').onclick = () => { navigator.clipboard && navigator.clipboard.writeText(H.pin).then(() => toast('PIN copied')); };
+$('#hLock').onclick = () => hostPatch({ locked: !(E.session && E.session.locked) }, true);
+$('#hTest').onclick = () => window.open(location.pathname + '?pin=' + H.pin, '_blank');
+$('#hQR').onclick = async () => {
+  const url = location.origin + location.pathname + '?pin=' + H.pin;
+  $('#qrLink').textContent = url; $('#qrBox').innerHTML = '<div class="muted">Loading QR…</div>';
+  $('#qrDlg').showModal();
+  if (!window.qrcode) await new Promise(res => { const s = document.createElement('script'); s.src = 'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js'; s.onload = res; s.onerror = res; document.head.appendChild(s); });
+  if (window.qrcode) { const q = window.qrcode(0, 'M'); q.addData(url); q.make(); $('#qrBox').innerHTML = `<img alt="QR code to join" src="${q.createDataURL(6, 3)}">`; }
+  else $('#qrBox').innerHTML = '<div class="muted">QR library unavailable. Share the link instead.</div>';
+  $('#qrCopy').onclick = () => navigator.clipboard.writeText(url).then(() => toast('Link copied'));
+};
+$('#qrClose').onclick = () => $('#qrDlg').close();
+
+/* ---------- build static host UI once ---------- */
+function buildHost() {
+  // effects
+  const grid = $('#fxGrid');
+  for (const cat of [...new Set(EFFECTS.map(e => e.cat))]) {
+    const h = document.createElement('div'); h.className = 'cat'; h.textContent = cat; grid.appendChild(h);
+    const row = document.createElement('div'); row.className = 'fxrow'; grid.appendChild(row);
+    for (const e of EFFECTS.filter(x => x.cat === cat)) {
+      const b = document.createElement('button'); b.className = 'fxbtn'; b.textContent = e.name; b.dataset.fx = e.id;
+      b.onclick = () => hostPatch({ 'scene.fx': e.id }); row.appendChild(b);
+    }
+  }
+  // palette presets
+  const pp = $('#palPresets');
+  for (const [name, cols] of Object.entries(PAL)) {
+    const b = document.createElement('button'); b.className = 'palchip'; b.title = name;
+    b.style.background = `linear-gradient(90deg,${cols.join(',')})`;
+    b.onclick = () => hostPatch({ 'scene.palette': [...cols] }, true); pp.appendChild(b);
+  }
+  // looks
+  const lk = $('#looks');
+  for (const L of LOOKS) {
+    const b = document.createElement('button'); b.className = 'btn'; b.textContent = L.name;
+    b.onclick = () => applyScene({ ...DEFAULT_SCENE, ...L.s }); lk.appendChild(b);
+  }
+  renderMyPresets();
+
+  // master
+  $('#mBlackout').onclick = () => hostPatch({ 'scene.blackout': !E.sc.blackout }, true);
+  $('#mBright').oninput = e => hostPatch({ 'scene.brightness': +e.target.value });
+  $('#mStrobe').onclick = () => hostPatch({ 'scene.strobeOn': !E.sc.strobeOn }, true);
+  $('#mStrobeHz').oninput = e => hostPatch({ 'scene.strobeHz': +e.target.value });
+  $('#mHitW').onclick = () => hit('#ffffff');
+  $('#mHitC').onclick = () => hit(E.sc.color);
+  $('#mRestart').onclick = () => hostPatch({ phaseStart: serverNow() }, true);
+  let holdPrev = false;
+  const holdOn = e => { e.preventDefault(); if (H.holding) return; H.holding = true; holdPrev = !!E.sc.strobeOn; hostPatch({ 'scene.strobeOn': true }, true); };
+  const holdOff = () => { if (!H.holding) return; H.holding = false; hostPatch({ 'scene.strobeOn': holdPrev }, true); };
+  $('#mHold').addEventListener('pointerdown', holdOn); window.addEventListener('pointerup', holdOff); window.addEventListener('pointercancel', holdOff);
+
+  // tempo / look
+  $('#pBpm').oninput = e => setTempo({ bpm: +e.target.value });
+  $('#pBpmN').onchange = e => setTempo({ bpm: clamp(+e.target.value || 0, 0, 300) });
+  $$('#pRate button').forEach(b => b.onclick = () => setTempo({ rate: +b.dataset.r }));
+  $('#pTap').onclick = tap;
+  $('#pSize').oninput = e => hostPatch({ 'scene.size': +e.target.value });
+  $$('#pDir button').forEach(b => b.onclick = () => hostPatch({ 'scene.dir': +b.dataset.d }, true));
+  $$('#pScope button').forEach(b => b.onclick = () => hostPatch({ 'scene.scope': b.dataset.s }, true));
+  $('#pC1').oninput = e => hostPatch({ 'scene.color': e.target.value });
+  $('#pC2').oninput = e => hostPatch({ 'scene.color2': e.target.value });
+
+  // presets
+  $('#presetSave').onclick = () => {
+    const name = $('#presetName').value.trim() || 'Scene ' + (loadPresets().length + 1);
+    const sc = {}; SCENE_KEYS.forEach(k => sc[k] = E.sc[k]);
+    const list = loadPresets(); list.push({ name, scene: sc }); localStorage.setItem('glowrig.presets', JSON.stringify(list));
+    $('#presetName').value = ''; renderMyPresets(); toast('Saved "' + name + '"');
+  };
+
+  // fixtures bulk
+  $('#selAll').onclick = () => { E.list.forEach(f => H.selected.add(f.id)); renderFixtures(); };
+  $('#selNone').onclick = () => { H.selected.clear(); renderFixtures(); };
+  const bulk = fn => { if (!H.selected.size) return toast('Select some lights first', true); fn([...H.selected]); };
+  $('#bulkGroupGo').onclick = () => bulk(ids => bulkWrite(ids, { group: $('#bulkGroup').value || null }));
+  $('#bulkSolid').onclick = () => bulk(ids => bulkWrite(ids, { mode: 'solid', color: $('#bulkColor').value }));
+  $('#bulkAuto').onclick = () => bulk(ids => bulkWrite(ids, { mode: 'auto' }));
+  $('#bulkOff').onclick = () => bulk(ids => bulkWrite(ids, { mode: 'off' }));
+  $('#ordRev').onclick = () => reorder([...E.list].reverse().map(f => f.id));
+  $('#ordShuf').onclick = () => reorder([...E.list].map(f => f.id).sort(() => Math.random() - 0.5));
+
+  // groups
+  $('#gAdd').onclick = () => { const n = $('#gNew').value.trim() || 'Group ' + (Object.keys((E.session && E.session.groups) || {}).length + 1); addGroup(n, '#' + Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0')); $('#gNew').value = ''; };
+  $('#gNew').addEventListener('keydown', e => { if (e.key === 'Enter') $('#gAdd').click(); });
+  $('#gSplit').onclick = () => autoSplit(clamp(parseInt($('#gSplitN').value) || 2, 2, 12));
+
+  // track which input is being dragged so remote echoes never fight the user
+  document.addEventListener('pointerdown', e => { if (e.target.matches && e.target.matches('input')) H.activeInput = e.target; });
+  ['pointerup', 'pointercancel'].forEach(t => window.addEventListener(t, () => setTimeout(() => H.activeInput = null, 200)));
+
+  // keyboard
+  document.addEventListener('keydown', e => {
+    if (!$('#view-host').classList.contains('on') || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.target.matches && e.target.matches('input[type=text],input:not([type]),input[type=number],select')) return;
+    const k = e.key.toLowerCase();
+    if (k === 'b') hostPatch({ 'scene.blackout': !E.sc.blackout }, true);
+    else if (k === 't') tap();
+    else if (k === 'f') hit('#ffffff');
+    else if (k === 's') hostPatch({ 'scene.strobeOn': !E.sc.strobeOn }, true);
+    else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+      const i = EFFECTS.findIndex(x => x.id === E.sc.fx), d = e.key === 'ArrowRight' ? 1 : -1;
+      hostPatch({ 'scene.fx': EFFECTS[mod(i + d, EFFECTS.length)].id }); e.preventDefault();
+    }
+  });
+}
+
+function hit(color) { hostPatch({ hit: { id: Date.now(), at: serverNow(), color: color || '#ffffff', decay: 650 } }, true); }
+function beatsNow() { const s = E.session, sc = E.sc, f = (sc.bpm || 0) * (sc.rate || 1); return f > 0 ? (serverNow() - (s.phaseStart || serverNow())) * f / 60000 : 0; }
+function setTempo({ bpm, rate }) { // keeps the beat position continuous while tempo changes
+  const sc = E.sc, B = beatsNow(), nb = bpm == null ? sc.bpm : bpm, nr = rate == null ? sc.rate : rate, f = nb * nr;
+  hostPatch({ 'scene.bpm': nb, 'scene.rate': nr, phaseStart: f > 0 ? serverNow() - B * 60000 / f : serverNow() });
+}
+function tap() {
+  const t = performance.now(); if (H.taps.length && t - H.taps[H.taps.length - 1] > 2000) H.taps = [];
+  H.taps.push(t); if (H.taps.length > 8) H.taps.shift();
+  let bpm = E.sc.bpm;
+  if (H.taps.length >= 2) { const iv = []; for (let i = 1; i < H.taps.length; i++) iv.push(H.taps[i] - H.taps[i - 1]); bpm = Math.round(60000 / (iv.reduce((a, b) => a + b) / iv.length) / (E.sc.rate || 1)); }
+  hostPatch({ 'scene.bpm': clamp(bpm, 1, 300), phaseStart: serverNow() }, true); // each tap is the downbeat
+}
+function applyScene(sc) {
+  const f = {}; SCENE_KEYS.forEach(k => { if (sc[k] !== undefined) f['scene.' + k] = Array.isArray(sc[k]) ? [...sc[k]] : sc[k]; });
+  f.phaseStart = serverNow(); hostPatch(f, true);
+}
+const loadPresets = () => { try { return JSON.parse(localStorage.getItem('glowrig.presets') || '[]'); } catch { return []; } };
+function renderMyPresets() {
+  const box = $('#myPresets'); box.innerHTML = ''; const list = loadPresets();
+  if (!list.length) { box.innerHTML = '<span class="muted">Nothing saved yet.</span>'; return; }
+  list.forEach((p, i) => {
+    const w = document.createElement('span'); w.className = 'preset';
+    const a = document.createElement('button'); a.className = 'btn'; a.textContent = p.name; a.onclick = () => applyScene(p.scene);
+    const x = document.createElement('button'); x.className = 'btn'; x.textContent = '×'; x.title = 'Delete';
+    x.onclick = () => { const l = loadPresets(); l.splice(i, 1); localStorage.setItem('glowrig.presets', JSON.stringify(l)); renderMyPresets(); };
+    w.append(a, x); box.appendChild(w);
+  });
+}
+
+/* ---------- sync controls from state ---------- */
+function setVal(el, v) { if (!el || el === document.activeElement || el === H.activeInput) return; if (String(el.value) !== String(v)) el.value = v; }
+function segSet(sel, attr, val) { $$(sel + ' button').forEach(b => b.classList.toggle('on', String(b.dataset[attr]) === String(val))); }
+function syncHostUI() {
+  const s = E.session; if (!s) return; const sc = E.sc;
+  $('#mBlackout').classList.toggle('on', !!sc.blackout); $('#mBlackout').textContent = sc.blackout ? 'Blackout is on' : 'Blackout';
+  setVal($('#mBright'), sc.brightness); $('#mBrightV').textContent = sc.brightness + '%';
+  $('#mStrobe').classList.toggle('on', !!sc.strobeOn); setVal($('#mStrobeHz'), sc.strobeHz); $('#mStrobeV').textContent = sc.strobeHz + ' Hz';
+  setVal($('#pBpm'), sc.bpm); setVal($('#pBpmN'), sc.bpm); segSet('#pRate', 'r', sc.rate);
+  setVal($('#pSize'), sc.size); $('#pSizeV').textContent = sc.size;
+  segSet('#pDir', 'd', sc.dir); segSet('#pScope', 's', sc.scope);
+  setVal($('#pC1'), sc.color); setVal($('#pC2'), sc.color2);
+  $$('#fxGrid .fxbtn').forEach(b => b.classList.toggle('on', b.dataset.fx === sc.fx));
+  const fx = EFFECT_MAP[sc.fx] || EFFECT_MAP.solid, u = fx.uses; $('#fxCurrent').textContent = fx.name;
+  $('#pSizeRow').classList.toggle('dim', !u.includes('size')); $('#pDirRow').classList.toggle('dim', !u.includes('dir'));
+  $('#pC1Row').classList.toggle('dim', !u.includes('color')); $('#pC2Row').classList.toggle('dim', !u.includes('color2'));
+  $('#pPalRow').classList.toggle('dim', !u.includes('palette'));
+  $('#hLock').textContent = 'Joining: ' + (s.locked ? 'locked' : 'open'); $('#hLock').classList.toggle('on', !!s.locked);
+  renderPalette();
+}
+function renderPalette() {
+  const box = $('#palEdit'), pal = E.sc.palette || [];
+  if (box.children.length !== pal.length + (pal.length < 8 ? 1 : 0)) {
+    box.innerHTML = '';
+    pal.forEach((c, i) => {
+      const w = document.createElement('span'); w.className = 'x';
+      const inp = document.createElement('input'); inp.type = 'color'; inp.dataset.i = i;
+      inp.oninput = () => { const p = [...E.sc.palette]; p[i] = inp.value; hostPatch({ 'scene.palette': p }); };
+      w.appendChild(inp);
+      if (pal.length > 1) { const x = document.createElement('button'); x.textContent = '×'; x.title = 'Remove colour'; x.onclick = () => { const p = [...E.sc.palette]; p.splice(i, 1); hostPatch({ 'scene.palette': p }, true); }; w.appendChild(x); }
+      box.appendChild(w);
+    });
+    if (pal.length < 8) { const a = document.createElement('button'); a.className = 'btn sm'; a.textContent = '+ Add'; a.onclick = () => hostPatch({ 'scene.palette': [...E.sc.palette, '#' + Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0')] }, true); box.appendChild(a); }
+  }
+  $$('input[type=color]', box).forEach((inp, i) => { if (pal[i] && inp !== document.activeElement && inp !== H.activeInput) inp.value = pal[i]; });
+}
+
+/* ---------- fixtures list ---------- */
+const NONE_OPT = '— none —';
+function groupSig() { const g = (E.session && E.session.groups) || {}; return Object.entries(g).sort((a, b) => (a[1].order || 0) - (b[1].order || 0)).map(([id, v]) => id + ':' + v.name).join('|'); }
+function fillGroupSelect(sel, sig) {
+  if (sel.dataset.sig === sig) return; const cur = sel.value; sel.dataset.sig = sig; sel.innerHTML = '';
+  const o0 = document.createElement('option'); o0.value = ''; o0.textContent = NONE_OPT; sel.appendChild(o0);
+  const g = (E.session && E.session.groups) || {};
+  Object.entries(g).sort((a, b) => (a[1].order || 0) - (b[1].order || 0)).forEach(([id, v]) => { const o = document.createElement('option'); o.value = id; o.textContent = v.name; sel.appendChild(o); });
+  sel.value = cur;
+}
+function makeRow(id) {
+  const el = document.createElement('div'); el.className = 'frow';
+  el.innerHTML = `<input type="checkbox" class="sel" aria-label="Select"><span class="sw"></span><input class="name" maxlength="24" aria-label="Name">
+    <span class="stat"><i class="dot"></i><span></span></span><select class="grp" aria-label="Group"></select>
+    <div class="seg mode"><button data-m="auto">Auto</button><button data-m="solid">Solid</button><button data-m="off">Off</button></div>
+    <input type="color" class="col" aria-label="Solid colour">
+    <div class="mv"><button class="btn sm up" title="Move up">↑</button><button class="btn sm dn" title="Move down">↓</button><button class="btn sm idf" title="Blink this device so you can find it">Find</button><button class="btn sm danger kick" title="Remove from rig">✕</button></div>`;
+  const q = s => $(s, el);
+  q('.sel').onchange = e => { e.target.checked ? H.selected.add(id) : H.selected.delete(id); renderFixtures(); };
+  q('.name').onchange = e => { const v = e.target.value.trim().slice(0, 24); if (v) fixturePatch(id, { name: v }, true); };
+  q('.grp').onchange = e => fixturePatch(id, { group: e.target.value || null }, true);
+  $$('.mode button', el).forEach(b => b.onclick = () => fixturePatch(id, { mode: b.dataset.m }, true));
+  q('.col').oninput = e => fixturePatch(id, { mode: 'solid', color: e.target.value });
+  q('.up').onclick = () => move(id, -1); q('.dn').onclick = () => move(id, 1);
+  q('.idf').onclick = () => hostPatch({ identify: { fid: id, at: serverNow() } }, true);
+  q('.kick').onclick = async () => {
+    const f = E.fixtures.get(id); if (!confirm('Remove "' + (f ? f.name : 'this light') + '" from the rig?')) return;
+    try { await deleteDoc(fref(id)); await deleteDoc(doc(db, 'sessions', H.pin, 'presence', id)).catch(() => {}); } catch (e) { toast(explain(e), true); }
+  };
+  return { el, sw: q('.sw'), last: '' };
+}
+function renderFixtures() {
+  if (!H.pin) return; if (E.dirty) E.relayout();
+  const list = E.list, sig = groupSig(), box = $('#flist');
+  $('#fEmpty').hidden = list.length > 0; $('#selCount').textContent = H.selected.size + ' selected';
+  fillGroupSelect($('#bulkGroup'), sig);
+  for (const [id, r] of H.rows) if (!E.fixtures.has(id)) { r.el.remove(); H.rows.delete(id); }
+  list.forEach((f, idx) => {
+    let r = H.rows.get(f.id); if (!r) { r = makeRow(f.id); H.rows.set(f.id, r); }
+    const q = s => $(s, r.el);
+    r.el.classList.toggle('sel', H.selected.has(f.id)); q('.sel').checked = H.selected.has(f.id);
+    if (document.activeElement !== q('.name')) q('.name').value = f.name;
+    fillGroupSelect(q('.grp'), sig); q('.grp').value = f.group && ((E.session.groups || {})[f.group]) ? f.group : '';
+    $$('.mode button', r.el).forEach(b => b.classList.toggle('on', b.dataset.m === f.mode));
+    if (document.activeElement !== q('.col') && H.activeInput !== q('.col')) q('.col').value = /^#[0-9a-f]{6}$/i.test(f.color) ? f.color : '#ffffff';
+    if (box.children[idx] !== r.el) box.insertBefore(r.el, box.children[idx] || null);
+  });
+  // stage orbs
+  const stage = $('#stage');
+  for (const [id, o] of H.orbs) if (!E.fixtures.has(id)) { o.remove(); H.orbs.delete(id); }
+  list.forEach((f, idx) => {
+    let o = H.orbs.get(f.id); if (!o) { o = document.createElement('div'); o.className = 'orb'; o.onclick = () => { H.selected.has(f.id) ? H.selected.delete(f.id) : H.selected.add(f.id); renderFixtures(); }; H.orbs.set(f.id, o); }
+    o.title = f.name; o.classList.toggle('sel', H.selected.has(f.id));
+    if (stage.children[idx] !== o) stage.insertBefore(o, stage.children[idx] || null);
+  });
+  let em = $('.empty', stage);
+  if (!list.length) { if (!em) { em = document.createElement('div'); em.className = 'empty'; em.textContent = 'Waiting for lights. Share the PIN or QR code.'; stage.appendChild(em); } }
+  else if (em) em.remove();
+  updatePresence();
+}
+function updatePresence() {
+  if (!H.pin) return; const now = serverNow(); let on = 0;
+  for (const [id, r] of H.rows) {
+    const t = H.presence.get(id), online = !!t && now - t < 40000; if (online) on++;
+    const st = $('.stat', r.el); $('.dot', st).className = 'dot' + (online ? ' ok' : ''); $('span', st).textContent = online ? 'online' : 'offline';
+    const o = H.orbs.get(id); if (o) o.classList.toggle('offline', !online);
+  }
+  $('#hCount').textContent = on + ' of ' + H.rows.size + ' online'; $('#hDot').className = 'dot' + (on ? ' ok' : '');
+  $('#fixInfo').textContent = H.rows.size ? H.rows.size + (H.rows.size === 1 ? ' device' : ' devices') : '';
+}
+async function bulkWrite(ids, data) {
+  ids.forEach(id => { const f = E.fixtures.get(id); if (f) Object.assign(f, data); }); E.dirty = true; renderFixtures();
+  try { const b = writeBatch(db); ids.forEach(id => b.update(fref(id), data)); await b.commit(); } catch (e) { toast(explain(e), true); }
+}
+function move(id, d) {
+  const ids = E.list.map(f => f.id), i = ids.indexOf(id), j = i + d; if (j < 0 || j >= ids.length) return;
+  [ids[i], ids[j]] = [ids[j], ids[i]]; reorder(ids);
+}
+async function reorder(ids) {
+  const changes = []; ids.forEach((id, i) => { const f = E.fixtures.get(id); if (f && f.order !== i * 10) { f.order = i * 10; changes.push([id, i * 10]); } });
+  E.dirty = true; renderFixtures(); if (!changes.length) return;
+  try { const b = writeBatch(db); changes.forEach(([id, o]) => b.update(fref(id), { order: o })); await b.commit(); } catch (e) { toast(explain(e), true); }
+}
+
+/* ---------- groups ---------- */
+function addGroup(name, color) {
+  const id = 'g' + newId();
+  hostPatch({ ['groups.' + id]: { name, color, color2: '#000000', mode: 'follow', fx: 'chase', order: Date.now() } }, true);
+  return id;
+}
+async function autoSplit(k) {
+  if (!E.list.length) return toast('No lights to split yet', true);
+  const fields = {}, ids = [], base = Date.now();
+  for (let j = 0; j < k; j++) { const id = 'g' + newId(); ids.push(id); fields['groups.' + id] = { name: 'Group ' + String.fromCharCode(65 + j), color: toHex(hsv(j / k, 1, 1)), color2: '#000000', mode: 'follow', fx: 'chase', order: base + j }; }
+  hostPatch(fields, true);
+  const assign = {}; E.list.forEach((f, i) => assign[f.id] = ids[i % k]);
+  Object.entries(assign).forEach(([id, g]) => { const f = E.fixtures.get(id); if (f) f.group = g; }); E.dirty = true;
+  try { const b = writeBatch(db); Object.entries(assign).forEach(([id, g]) => b.update(fref(id), { group: g })); await b.commit(); } catch (e) { toast(explain(e), true); }
+  renderFixtures();
+}
+function makeGroupCard(id) {
+  const el = document.createElement('div'); el.className = 'gcard';
+  el.innerHTML = `<div class="gh"><input class="gname" maxlength="20" aria-label="Group name"><span class="chip gcount"></span>
+      <button class="btn sm gup" title="Move up">↑</button><button class="btn sm gdn" title="Move down">↓</button><button class="btn sm danger gdel" title="Delete group">✕</button></div>
+    <div class="seg gmode"><button data-m="follow">Follow</button><button data-m="solid">Solid</button><button data-m="fx">Effect</button><button data-m="off">Off</button></div>
+    <div class="gctl"><input type="color" class="gc1" aria-label="Group colour"><input type="color" class="gc2" aria-label="Group colour 2"><select class="gfx" aria-label="Group effect"></select><button class="btn sm gsel">Select members</button></div>`;
+  const q = s => $(s, el), gp = (k, v, imm) => hostPatch({ ['groups.' + id + '.' + k]: v }, imm);
+  const sel = q('.gfx'); EFFECTS.forEach(e => { const o = document.createElement('option'); o.value = e.id; o.textContent = e.name; sel.appendChild(o); });
+  q('.gname').onchange = e => { const v = e.target.value.trim().slice(0, 20); if (v) gp('name', v, true); };
+  $$('.gmode button', el).forEach(b => b.onclick = () => gp('mode', b.dataset.m, true));
+  q('.gc1').oninput = e => gp('color', e.target.value); q('.gc2').oninput = e => gp('color2', e.target.value);
+  sel.onchange = e => gp('fx', e.target.value, true);
+  q('.gsel').onclick = () => { E.list.filter(f => f.group === id).forEach(f => H.selected.add(f.id)); renderFixtures(); };
+  q('.gdel').onclick = async () => {
+    if (!confirm('Delete this group? Its lights become ungrouped.')) return;
+    const ids = E.list.filter(f => f.group === id).map(f => f.id);
+    hostPatch({ ['groups.' + id]: DEL }, true);
+    if (ids.length) await bulkWrite(ids, { group: null });
+  };
+  const swap = d => {
+    const arr = Object.entries(E.session.groups || {}).sort((a, b) => (a[1].order || 0) - (b[1].order || 0)).map(x => x[0]);
+    const i = arr.indexOf(id), j = i + d; if (j < 0 || j >= arr.length) return; [arr[i], arr[j]] = [arr[j], arr[i]];
+    const f = {}; arr.forEach((g, n) => f['groups.' + g + '.order'] = n * 10); hostPatch(f, true);
+  };
+  q('.gup').onclick = () => swap(-1); q('.gdn').onclick = () => swap(1);
+  return { el };
+}
+function renderGroups() {
+  if (!H.pin || !E.session) return; if (E.dirty) E.relayout();
+  const groups = E.session.groups || {}, box = $('#glist');
+  for (const [id, g] of H.gcards) if (!groups[id]) { g.el.remove(); H.gcards.delete(id); }
+  Object.entries(groups).sort((a, b) => (a[1].order || 0) - (b[1].order || 0)).forEach(([id, g], idx) => {
+    let c = H.gcards.get(id); if (!c) { c = makeGroupCard(id); H.gcards.set(id, c); }
+    const q = s => $(s, c.el), mode = g.mode || 'follow';
+    if (document.activeElement !== q('.gname')) q('.gname').value = g.name;
+    q('.gcount').textContent = E.list.filter(f => f.group === id).length + ' lights';
+    $$('.gmode button', c.el).forEach(b => b.classList.toggle('on', b.dataset.m === mode));
+    if (document.activeElement !== q('.gc1') && H.activeInput !== q('.gc1')) q('.gc1').value = g.color || '#ffffff';
+    if (document.activeElement !== q('.gc2') && H.activeInput !== q('.gc2')) q('.gc2').value = g.color2 || '#000000';
+    q('.gc1').style.display = (mode === 'solid' || mode === 'fx') ? '' : 'none';
+    q('.gc2').style.display = mode === 'fx' ? '' : 'none'; q('.gfx').style.display = mode === 'fx' ? '' : 'none';
+    if (document.activeElement !== q('.gfx')) q('.gfx').value = g.fx || 'chase';
+    if (box.children[idx] !== c.el) box.insertBefore(c.el, box.children[idx] || null);
+  });
+}
+
+/* ---------- live preview loop ---------- */
+function hostLoop() {
+  if (!H.pin) return; const now = serverNow(); let r = 0, g = 0, b = 0, n = 0;
+  for (const [id, row] of H.rows) {
+    const c = E.colorFor(id, now), s = css(c);
+    if (s !== row.last) { row.last = s; row.sw.style.background = s; }
+    const o = H.orbs.get(id);
+    if (o && o.dataset.c !== s) { o.dataset.c = s; o.style.background = s; o.style.boxShadow = `0 0 ${10 + 26 * Math.max(c[0], c[1], c[2])}px ${2 + 8 * Math.max(c[0], c[1], c[2])}px ${s.replace('rgb', 'rgba').replace(')', ',0.55)')}`; }
+    r += c[0]; g += c[1]; b += c[2]; n++;
+  }
+  if (n && performance.now() - H.lastLive > 90) { // UI accent follows what the rig is showing
+    H.lastLive = performance.now(); let col = [r / n, g / n, b / n]; const m = Math.max(col[0], col[1], col[2]);
+    if (m > 0.05) { col = scale(col, 1 / m); document.documentElement.style.setProperty('--live', css(mix(col, WHITE, 0.15))); }
+  }
+  H.raf = requestAnimationFrame(hostLoop);
+}
+
+/* =====================================================================
+   Boot: auto-resume a fixture after reload, otherwise show home
+   ===================================================================== */
+(async () => {
+  try { await ensureAuth(); }
+  catch (e) { showErr($('#authErr'), explain(e)); return; }
+  const saved = store.get('glowrig.role', true);
+  if (saved) {
+    try { const { pin, name } = JSON.parse(saved); await joinRig(pin, name); }
+    catch (e) { store.del('glowrig.role', true); showErr($('#jErr'), explain(e)); }
+  } else if ($('#jPin').value.length >= 4) $('#jName').focus();
+})();
+</script>
+</body>
+</html>
