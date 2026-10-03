@@ -62,7 +62,14 @@ input:focus-visible,button:focus-visible,select:focus-visible{outline:2px solid 
 
 /* ---------- fixture ---------- */
 #view-fixture{position:fixed;inset:0;background:#000;overflow:hidden;touch-action:manipulation}
-#fxScreen{position:absolute;inset:0;background:#000}
+#fxScreen{position:absolute;inset:0;background:#000;overflow:hidden}
+#fxScreen::before,#fxScreen::after{content:"";position:absolute;inset:0;pointer-events:none}
+#fxScreen::before{opacity:var(--shape-opacity,0);transform:scale(var(--shape-scale,1)) rotate(var(--shape-rot,0deg));background:var(--shape-bg,transparent);mix-blend-mode:screen;filter:blur(var(--shape-blur,0px));transition:opacity .08s linear}
+#fxScreen::after{opacity:var(--pattern-opacity,0);background:var(--pattern-bg,transparent);mix-blend-mode:overlay;transform:translate3d(var(--pattern-x,0),var(--pattern-y,0),0) rotate(var(--pattern-rot,0deg));transition:opacity .08s linear}
+#fxScreen.rings{box-shadow:inset 0 0 0 var(--ring-w,18px) var(--ring1,#fff),inset 0 0 0 calc(var(--ring-w,18px) + 10px) var(--ring2,rgba(255,255,255,.25)),inset 0 0 48px var(--ring1,#fff)}
+#fxScreen.rings::before{border-radius:50%;inset:12%;background:radial-gradient(circle,transparent 0 42%,var(--ring2,rgba(255,255,255,.32)) 43% 47%,transparent 48% 59%,var(--ring1,#fff) 60% 64%,transparent 65%);filter:blur(1px)}
+#fxScreen.shapes::before{inset:16%;border-radius:28%;background:var(--shape-bg);box-shadow:0 0 70px var(--ring1,#fff),inset 0 0 34px rgba(255,255,255,.42)}
+#fxScreen.patterns::after{background:var(--pattern-bg);background-size:var(--pattern-size,80px) var(--pattern-size,80px)}
 .hud{position:absolute;inset:0;display:flex;align-items:flex-end;justify-content:center;padding:18px;padding-bottom:calc(18px + env(safe-area-inset-bottom));transition:opacity .25s}
 .hud.off{opacity:0;pointer-events:none}
 .hudcard{background:rgba(18,19,22,.82);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,.14);border-radius:14px;padding:16px 18px;width:min(440px,100%);text-align:center}
@@ -199,6 +206,7 @@ dialog .lnk{font-size:12px;color:var(--mute);word-break:break-all;margin:.8rem 0
     <span class="chip" id="hSync">clock syncing…</span>
     <button id="hQR" class="btn sm">Invite / QR</button>
     <button id="hTest" class="btn sm">Add this device</button>
+    <button id="hRefresh" class="btn sm">Refresh lights</button>
     <button id="hLock" class="btn sm">Joining: open</button>
     <button id="hLeave" class="btn sm">Leave</button>
     <button id="hEnd" class="btn sm danger">End rig</button>
@@ -264,6 +272,11 @@ dialog .lnk{font-size:12px;color:var(--mute);word-break:break-all;margin:.8rem 0
         <div id="pC1Row" class="row" style="gap:10px"><span class="lbl">Colour 1</span><input type="color" id="pC1"></div>
         <div id="pC2Row" class="row" style="gap:10px"><span class="lbl">Colour 2</span><input type="color" id="pC2"></div>
       </div>
+      <div class="row">
+        <span class="lbl">Screen style</span>
+        <div class="seg" id="vMode"><button data-v="solid">Solid</button><button data-v="rings">Rings</button><button data-v="shapes">Shapes</button><button data-v="patterns">Patterns</button></div>
+      </div>
+      <div class="row"><span class="lbl">Style amount</span><input id="vAmt" type="range" min="0" max="100" style="flex:1"><span class="val" id="vAmtV"></span></div>
       <div id="pPalRow">
         <div class="row"><span class="lbl">Palette</span><div class="palrow" id="palEdit"></div></div>
         <div class="row"><span class="lbl"></span><div class="palrow" id="palPresets"></div></div>
@@ -415,9 +428,10 @@ const PAL = {
 const DEFAULT_SCENE = {
   fx: 'rainbow_wave', bpm: 120, rate: 1, color: '#ff2d95', color2: '#000000', palette: PAL.Neon,
   brightness: 100, size: 50, dir: 1, scope: 'all', blackout: false, strobeOn: false, strobeHz: 10,
+  visual: { mode: 'solid', amount: 70 },
   audio: { on: false, mode: 'brightness', level: 0, pulse: 0, sensitivity: 100, amount: 60, updatedAt: 0 }
 };
-const SCENE_KEYS = ['fx', 'bpm', 'rate', 'color', 'color2', 'palette', 'brightness', 'size', 'dir', 'scope', 'strobeHz'];
+const SCENE_KEYS = ['fx', 'bpm', 'rate', 'color', 'color2', 'palette', 'brightness', 'size', 'dir', 'scope', 'strobeHz', 'visual'];
 const LOOKS = [
   { name: 'Club',      s: { fx: 'rainbow_wave', bpm: 128, size: 60, dir: 1, scope: 'all' } },
   { name: 'Rave',      s: { fx: 'disco', bpm: 140, size: 70, palette: PAL.Neon, color2: '#000000' } },
@@ -533,6 +547,7 @@ const E = {
   },
   touch() {
     const d = this.session; this.sc = { ...DEFAULT_SCENE, ...((d && d.scene) || {}) };
+    this.sc.visual = { ...DEFAULT_SCENE.visual, ...(this.sc.visual || {}) };
     this.sc.audio = { ...DEFAULT_SCENE.audio, ...(this.sc.audio || {}), ...(this.audio || {}) };
     const p = (this.sc.palette && this.sc.palette.length) ? this.sc.palette : ['#ffffff'];
     this.pal = p.map(hex); this.dirty = true;
@@ -722,7 +737,7 @@ $('#hResume').onclick = async () => {
 /* =====================================================================
    Fixture mode
    ===================================================================== */
-const FX = { active: false, pin: null, fid: null, unsubs: [], hb: null, raf: 0, last: '', wake: null, torch: null, torchOn: false, torchWant: false, torchT: 0, hudT: null, pc: null, dc: null, offerSdp: '' };
+const FX = { active: false, pin: null, fid: null, unsubs: [], hb: null, raf: 0, last: '', wake: null, torch: null, torchOn: false, torchWant: false, torchT: 0, hudT: null, pc: null, dc: null, offerSdp: '', reloadId: null };
 
 async function joinRig(pin, name) {
   await ensureAuth();
@@ -754,6 +769,7 @@ function fixtureAttach(pin, fid, name) {
   FX.unsubs.push(onSnapshot(sref, snap => {
     if (!snap.exists()) { if (!snap.metadata.fromCache) fixtureExit('The host ended this rig.'); return; }
     E.setSession(snap.data({ serverTimestamps: 'estimate' }));
+    checkRemoteReload();
   }, err => fixtureExit(explain(err))));
   FX.unsubs.push(onSnapshot(collection(sref, 'fixtures'), snap => {
     const m = new Map(); snap.forEach(d => m.set(d.id, { id: d.id, ...d.data() }));
@@ -762,7 +778,7 @@ function fixtureAttach(pin, fid, name) {
     else { const me = m.get(fid); if (me) $('#fxName').textContent = me.name; }
   }, err => fixtureExit(explain(err))));
   FX.unsubs.push(onValue(audioRef(pin), snap => E.setAudio(snap.val()), () => {}));
-  FX.unsubs.push(onValue(liveRef(pin), snap => E.setLive(snap.val()), () => {}));
+  FX.unsubs.push(onValue(liveRef(pin), snap => { E.setLive(snap.val()); checkRemoteReload(); }, () => {}));
   rtcStartFixture(pin, fid);
   clockStart(pin);
   const beat = () => setDoc(doc(db, 'sessions', pin, 'presence', fid), { ownerUid: uid, lastSeen: serverTimestamp() }).catch(() => {});
@@ -770,12 +786,42 @@ function fixtureAttach(pin, fid, name) {
   wakeLock();
   const loop = () => {
     if (!FX.active) return;
-    const c = E.colorFor(FX.fid, serverNow()), str = css(c);
-    if (str !== FX.last) { $('#fxScreen').style.background = str; FX.last = str; }
+    const now = serverNow(), c = E.colorFor(FX.fid, now), str = css(c);
+    renderFixtureScreen(c, now, str);
     torchUpdate(c);
     FX.raf = requestAnimationFrame(loop);
   };
   FX.raf = requestAnimationFrame(loop);
+}
+
+function fixtureBeat(now) {
+  const sc = E.sc, s = E.session, bpm = (sc.bpm || 0) * (sc.rate || 1);
+  return bpm > 0 ? (now - ((s && s.phaseStart) || now)) * bpm / 60000 : now / 1000;
+}
+function renderFixtureScreen(c, now, str) {
+  const el = $('#fxScreen'), visual = E.sc.visual || DEFAULT_SCENE.visual, mode = visual.mode || 'solid';
+  const au = E.sc.audio || DEFAULT_SCENE.audio, pulse = clamp(au.pulse || 0), amt = clamp((visual.amount == null ? 70 : visual.amount) / 100);
+  const beat = fixtureBeat(now), wave = 0.5 + 0.5 * Math.sin(TAU * beat), pop = clamp(0.25 + wave * 0.45 + pulse * 0.75);
+  const c2 = palAt(E.pal.length ? E.pal : [WHITE], beat / 6 + hashStr(FX.fid || 'x') * 0.00001), ring1 = css(mix(c, WHITE, 0.18)), ring2 = css(mix(c2, WHITE, 0.12));
+  const bg = mode === 'solid'
+    ? str
+    : `radial-gradient(circle at 50% 50%,${css(mix(c, WHITE, 0.22))} 0%,${str} ${36 + pop * 18}%,${css(scale(c, 0.22))} 100%)`;
+  if (mode !== 'solid' || str !== FX.last || el.dataset.mode !== mode) { el.style.background = bg; FX.last = str; }
+  el.dataset.mode = mode; el.className = mode === 'solid' ? '' : mode;
+  el.style.setProperty('--ring1', ring1);
+  el.style.setProperty('--ring2', ring2);
+  el.style.setProperty('--ring-w', Math.round(8 + amt * 30 + pulse * 14) + 'px');
+  el.style.setProperty('--shape-opacity', mode === 'shapes' || mode === 'rings' ? String(clamp(0.25 + amt * 0.5 + pulse * 0.35)) : '0');
+  el.style.setProperty('--shape-scale', String(0.72 + amt * 0.35 + pop * 0.22));
+  el.style.setProperty('--shape-rot', Math.round((beat * 36) % 360) + 'deg');
+  el.style.setProperty('--shape-blur', mode === 'rings' ? '0px' : Math.round(2 + pulse * 10) + 'px');
+  el.style.setProperty('--shape-bg', `conic-gradient(from ${Math.round(beat * 80)}deg,transparent 0 18%,${ring1} 20% 34%,transparent 36% 52%,${ring2} 54% 70%,transparent 72% 100%)`);
+  el.style.setProperty('--pattern-opacity', mode === 'patterns' ? String(clamp(0.18 + amt * 0.5 + pulse * 0.35)) : '0');
+  el.style.setProperty('--pattern-size', Math.round(44 + (1 - amt) * 70 + pulse * 28) + 'px');
+  el.style.setProperty('--pattern-x', Math.round((beat * 12) % 80) + 'px');
+  el.style.setProperty('--pattern-y', Math.round((beat * -9) % 80) + 'px');
+  el.style.setProperty('--pattern-rot', Math.round(beat * 12) + 'deg');
+  el.style.setProperty('--pattern-bg', `linear-gradient(45deg,transparent 0 42%,${ring1} 43% 47%,transparent 48% 100%),radial-gradient(circle at 50% 50%,${ring2} 0 12%,transparent 13% 100%)`);
 }
 
 function fixtureDetach(keepStorage) {
@@ -785,6 +831,17 @@ function fixtureDetach(keepStorage) {
   clockStop(); torchStop();
   if (FX.wake) { FX.wake.release().catch(() => {}); FX.wake = null; }
   if (!keepStorage) { store.del('glowrig.role', true); }
+}
+function checkRemoteReload() {
+  if (!FX.active || !E.session) return;
+  const r = E.session.reload;
+  if (!r || !r.id || r.id === FX.reloadId) return;
+  FX.reloadId = r.id;
+  const age = serverNow() - (r.at || 0);
+  if (age > -1000 && age < 15000) {
+    $('#fxStatus').textContent = 'refreshing...';
+    setTimeout(() => location.reload(), 250);
+  }
 }
 function rtcStopFixture() {
   if (FX.dc) { try { FX.dc.close(); } catch {} }
@@ -797,6 +854,7 @@ function rtcUseMessage(raw) {
     if (msg.t !== 'state') return;
     if (msg.live) E.setLive(msg.live);
     if (msg.audio) E.setAudio(msg.audio);
+    checkRemoteReload();
   } catch {}
 }
 function rtcStartFixture(pin, fid) {
@@ -915,6 +973,7 @@ function livePayload() {
     phaseStart: s.phaseStart || serverNow(),
     hit: s.hit || null,
     identify: s.identify || null,
+    reload: s.reload || null,
     locked: !!s.locked,
     updatedAt: serverNow()
   };
@@ -1061,6 +1120,11 @@ $('#hEnd').onclick = async () => {
 $('#hPinBtn').onclick = () => { navigator.clipboard && navigator.clipboard.writeText(H.pin).then(() => toast('PIN copied')); };
 $('#hLock').onclick = () => hostPatch({ locked: !(E.session && E.session.locked) }, true);
 $('#hTest').onclick = () => window.open(location.pathname + '?pin=' + H.pin, '_blank');
+$('#hRefresh').onclick = () => {
+  if (!confirm('Refresh all joined light screens now?')) return;
+  hostPatch({ reload: { id: Date.now(), at: serverNow() } }, true);
+  toast('Refresh sent to lights');
+};
 $('#hQR').onclick = async () => {
   const url = location.origin + location.pathname + '?pin=' + H.pin;
   $('#qrLink').textContent = url; $('#qrBox').innerHTML = '<div class="muted">Loading QR…</div>';
@@ -1122,6 +1186,8 @@ function buildHost() {
   $$('#pScope button').forEach(b => b.onclick = () => hostPatch({ 'scene.scope': b.dataset.s }, true));
   $('#pC1').oninput = e => hostPatch({ 'scene.color': e.target.value });
   $('#pC2').oninput = e => hostPatch({ 'scene.color2': e.target.value });
+  $$('#vMode button').forEach(b => b.onclick = () => hostPatch({ 'scene.visual.mode': b.dataset.v }, true));
+  $('#vAmt').oninput = e => hostPatch({ 'scene.visual.amount': +e.target.value });
   $('#aToggle').onclick = () => H.audio.on ? audioStop(true) : audioStart();
   $('#aSens').oninput = e => hostPatch({ 'scene.audio.sensitivity': +e.target.value });
   $('#aAmt').oninput = e => hostPatch({ 'scene.audio.amount': +e.target.value });
@@ -1267,6 +1333,9 @@ function syncHostUI() {
   setVal($('#pSize'), sc.size); $('#pSizeV').textContent = sc.size;
   segSet('#pDir', 'd', sc.dir); segSet('#pScope', 's', sc.scope);
   setVal($('#pC1'), sc.color); setVal($('#pC2'), sc.color2);
+  const vi = sc.visual || DEFAULT_SCENE.visual;
+  segSet('#vMode', 'v', vi.mode || 'solid');
+  setVal($('#vAmt'), vi.amount == null ? 70 : vi.amount); $('#vAmtV').textContent = (vi.amount == null ? 70 : vi.amount) + '%';
   $$('#fxGrid .fxbtn').forEach(b => b.classList.toggle('on', b.dataset.fx === sc.fx));
   const fx = EFFECT_MAP[sc.fx] || EFFECT_MAP.solid, u = fx.uses; $('#fxCurrent').textContent = fx.name;
   $('#pSizeRow').classList.toggle('dim', !u.includes('size')); $('#pDirRow').classList.toggle('dim', !u.includes('dir'));
