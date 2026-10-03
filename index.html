@@ -65,10 +65,10 @@ input:focus-visible,button:focus-visible,select:focus-visible{outline:2px solid 
 #fxScreen{position:absolute;inset:0;background:#000;overflow:hidden}
 #fxScreen::before,#fxScreen::after{content:"";position:absolute;inset:0;pointer-events:none}
 #fxScreen::before{opacity:var(--shape-opacity,0);transform:scale(var(--shape-scale,1)) rotate(var(--shape-rot,0deg));background:var(--shape-bg,transparent);mix-blend-mode:screen;filter:blur(var(--shape-blur,0px));transition:opacity .08s linear}
-#fxScreen::after{opacity:var(--pattern-opacity,0);background:var(--pattern-bg,transparent);mix-blend-mode:overlay;transform:translate3d(var(--pattern-x,0),var(--pattern-y,0),0) rotate(var(--pattern-rot,0deg));transition:opacity .08s linear}
-#fxScreen.rings{box-shadow:inset 0 0 0 var(--ring-w,18px) var(--ring1,#fff),inset 0 0 0 calc(var(--ring-w,18px) + 10px) var(--ring2,rgba(255,255,255,.25)),inset 0 0 48px var(--ring1,#fff)}
-#fxScreen.rings::before{border-radius:50%;inset:12%;background:radial-gradient(circle,transparent 0 42%,var(--ring2,rgba(255,255,255,.32)) 43% 47%,transparent 48% 59%,var(--ring1,#fff) 60% 64%,transparent 65%);filter:blur(1px)}
-#fxScreen.shapes::before{inset:16%;border-radius:28%;background:var(--shape-bg);box-shadow:0 0 70px var(--ring1,#fff),inset 0 0 34px rgba(255,255,255,.42)}
+#fxScreen::after{opacity:var(--pattern-opacity,0);background:var(--pattern-bg,transparent);mix-blend-mode:screen;transform:translate3d(var(--pattern-x,0),var(--pattern-y,0),0) rotate(var(--pattern-rot,0deg));transition:opacity .08s linear}
+#fxScreen.rings{box-shadow:inset 0 0 0 var(--ring-w,18px) var(--ring1,#fff),inset 0 0 42px var(--ring2,rgba(255,255,255,.25))}
+#fxScreen.rings::before{inset:0;background:radial-gradient(ellipse at center,transparent 0 58%,var(--ring2,rgba(255,255,255,.28)) 60% 64%,transparent 66% 72%,var(--ring1,#fff) 74% 77%,transparent 79%);filter:blur(1px)}
+#fxScreen.shapes::before{inset:0;background:radial-gradient(circle at center,var(--ring1,#fff) 0 var(--shape-core,26%),transparent calc(var(--shape-core,26%) + 1%)),linear-gradient(90deg,transparent 0 46%,var(--ring2,rgba(255,255,255,.35)) 47% 53%,transparent 54%),linear-gradient(0deg,transparent 0 46%,var(--ring2,rgba(255,255,255,.35)) 47% 53%,transparent 54%);box-shadow:inset 0 0 80px rgba(255,255,255,.15)}
 #fxScreen.patterns::after{background:var(--pattern-bg);background-size:var(--pattern-size,80px) var(--pattern-size,80px)}
 .hud{position:absolute;inset:0;display:flex;align-items:flex-end;justify-content:center;padding:18px;padding-bottom:calc(18px + env(safe-area-inset-bottom));transition:opacity .25s}
 .hud.off{opacity:0;pointer-events:none}
@@ -761,7 +761,7 @@ async function joinRig(pin, name) {
 
 function fixtureAttach(pin, fid, name) {
   fixtureDetach(true);
-  Object.assign(FX, { active: true, pin, fid, last: '' });
+  Object.assign(FX, { active: true, pin, fid, last: '', reloadId: store.get('glowrig.reload.' + pin + '.' + fid, true) });
   E.session = null; E.live = null; E.audio = null; E.fixtures = new Map(); E.dirty = true;
   $('#fxName').textContent = name; $('#fxPin').textContent = pin; $('#fxStatus').textContent = 'connected';
   showView('view-fixture'); showHud(true); onClock();
@@ -801,27 +801,26 @@ function fixtureBeat(now) {
 function renderFixtureScreen(c, now, str) {
   const el = $('#fxScreen'), visual = E.sc.visual || DEFAULT_SCENE.visual, mode = visual.mode || 'solid';
   const au = E.sc.audio || DEFAULT_SCENE.audio, pulse = clamp(au.pulse || 0), amt = clamp((visual.amount == null ? 70 : visual.amount) / 100);
-  const beat = fixtureBeat(now), wave = 0.5 + 0.5 * Math.sin(TAU * beat), pop = clamp(0.25 + wave * 0.45 + pulse * 0.75);
-  const c2 = palAt(E.pal.length ? E.pal : [WHITE], beat / 6 + hashStr(FX.fid || 'x') * 0.00001), ring1 = css(mix(c, WHITE, 0.18)), ring2 = css(mix(c2, WHITE, 0.12));
-  const bg = mode === 'solid'
-    ? str
-    : `radial-gradient(circle at 50% 50%,${css(mix(c, WHITE, 0.22))} 0%,${str} ${36 + pop * 18}%,${css(scale(c, 0.22))} 100%)`;
+  const beat = fixtureBeat(now), wave = 0.5 + 0.5 * Math.sin(TAU * beat), pop = clamp(0.18 + wave * 0.35 + pulse * 0.85);
+  const base = css(c), glow = css(mix(c, WHITE, 0.28)), dim = css(scale(c, 0.28));
+  const bg = mode === 'solid' ? str : `radial-gradient(circle at center,${glow} 0%,${base} ${42 + pop * 12}%,${dim} 100%)`;
   if (mode !== 'solid' || str !== FX.last || el.dataset.mode !== mode) { el.style.background = bg; FX.last = str; }
   el.dataset.mode = mode; el.className = mode === 'solid' ? '' : mode;
-  el.style.setProperty('--ring1', ring1);
-  el.style.setProperty('--ring2', ring2);
-  el.style.setProperty('--ring-w', Math.round(8 + amt * 30 + pulse * 14) + 'px');
-  el.style.setProperty('--shape-opacity', mode === 'shapes' || mode === 'rings' ? String(clamp(0.25 + amt * 0.5 + pulse * 0.35)) : '0');
-  el.style.setProperty('--shape-scale', String(0.72 + amt * 0.35 + pop * 0.22));
-  el.style.setProperty('--shape-rot', Math.round((beat * 36) % 360) + 'deg');
-  el.style.setProperty('--shape-blur', mode === 'rings' ? '0px' : Math.round(2 + pulse * 10) + 'px');
-  el.style.setProperty('--shape-bg', `conic-gradient(from ${Math.round(beat * 80)}deg,transparent 0 18%,${ring1} 20% 34%,transparent 36% 52%,${ring2} 54% 70%,transparent 72% 100%)`);
-  el.style.setProperty('--pattern-opacity', mode === 'patterns' ? String(clamp(0.18 + amt * 0.5 + pulse * 0.35)) : '0');
-  el.style.setProperty('--pattern-size', Math.round(44 + (1 - amt) * 70 + pulse * 28) + 'px');
+  el.style.setProperty('--ring1', glow);
+  el.style.setProperty('--ring2', base);
+  el.style.setProperty('--ring-w', Math.round(8 + amt * 24 + pop * 12) + 'px');
+  el.style.setProperty('--shape-opacity', mode === 'shapes' || mode === 'rings' ? String(clamp(0.16 + amt * 0.44 + pop * 0.24)) : '0');
+  el.style.setProperty('--shape-core', Math.round(13 + amt * 18 + pop * 15) + '%');
+  el.style.setProperty('--shape-scale', String(0.9 + pop * 0.1));
+  el.style.setProperty('--shape-rot', Math.round((beat * 18) % 360) + 'deg');
+  el.style.setProperty('--shape-blur', mode === 'rings' ? '0px' : Math.round(pop * 4) + 'px');
+  el.style.setProperty('--shape-bg', `radial-gradient(circle at center,${glow} 0 ${Math.round(18 + pop * 22)}%,transparent ${Math.round(19 + pop * 22)}%)`);
+  el.style.setProperty('--pattern-opacity', mode === 'patterns' ? String(clamp(0.12 + amt * 0.36 + pop * 0.2)) : '0');
+  el.style.setProperty('--pattern-size', Math.round(36 + (1 - amt) * 64 + pop * 20) + 'px');
   el.style.setProperty('--pattern-x', Math.round((beat * 12) % 80) + 'px');
   el.style.setProperty('--pattern-y', Math.round((beat * -9) % 80) + 'px');
-  el.style.setProperty('--pattern-rot', Math.round(beat * 12) + 'deg');
-  el.style.setProperty('--pattern-bg', `linear-gradient(45deg,transparent 0 42%,${ring1} 43% 47%,transparent 48% 100%),radial-gradient(circle at 50% 50%,${ring2} 0 12%,transparent 13% 100%)`);
+  el.style.setProperty('--pattern-rot', Math.round(beat * 8) + 'deg');
+  el.style.setProperty('--pattern-bg', `linear-gradient(45deg,transparent 0 44%,${glow} 45% 49%,transparent 50% 100%),radial-gradient(circle at 50% 50%,${base} 0 10%,transparent 11% 100%)`);
 }
 
 function fixtureDetach(keepStorage) {
@@ -837,6 +836,7 @@ function checkRemoteReload() {
   const r = E.session.reload;
   if (!r || !r.id || r.id === FX.reloadId) return;
   FX.reloadId = r.id;
+  if (FX.pin && FX.fid) store.set('glowrig.reload.' + FX.pin + '.' + FX.fid, String(r.id), true);
   const age = serverNow() - (r.at || 0);
   if (age > -1000 && age < 15000) {
     $('#fxStatus').textContent = 'refreshing...';
